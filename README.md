@@ -51,16 +51,20 @@ It is **prohibitive** to use query vectors during the indexing phase.
 ## Compilation
 Build the project
 ```
-make
+mkdir -p "build"
+cd "build"
+cmake ..
+cmake --build .
+```
+Run the project
+```
+cd "build"
+./baseline.out
 ```
 Build and run the project
 ```
 chmod +x run.sh
-./run.sh
-```
-Run the project
-```
-./test
+sudo ./run.sh
 ```
 
 ## Organization
