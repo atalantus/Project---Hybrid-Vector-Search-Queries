@@ -1,0 +1,15 @@
+
+Running Optimized Vector Search
+Reading Data: ../data/dummy-data.bin
+# of points: 10000
+Finish Reading Data
+10000
+Reading Data: ../data/dummy-queries.bin
+# of points: 10000
+Finish Reading Data
+# data points:  10000
+# data point dim:  102
+# queries:      10000
+   cycles, kcycles, instructions, L1-misses, LLC-misses, branch-misses, task-clock, scale,  IPC, CPUs,  GHz 
+394652.39, 6358.94,    452598.75,   8125.10,     233.03,       2996.35,  103645.80,  1000, 1.15, 1.00, 3.81 
+

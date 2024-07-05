@@ -27,7 +27,7 @@ The 104-dimensional representation for a query is organized as follows:
 There are four types of queries, i.e., the query_type takes values from 0, 1, 2 and 3. The 4 types of queries correspond to:
 
 * If query_type=0: Vector-only query, i.e., the conventional approximate nearest neighbor (ANN) search query.
-*If query_type=1: Vector query with categorical attribute constraint, i.e., ANN search for data points satisfying `C=v`.
+* If query_type=1: Vector query with categorical attribute constraint, i.e., ANN search for data points satisfying `C=v`.
 * If query_type=2: Vector query with timestamp attribute constraint, i.e., ANN search for data points satisfying `l≤T≤r`.
 * If query_type=3: Vector query with both categorical and timestamp attribute constraints, i.e. ANN (Approximate Nearest Neighbour) search for data points satisfying `C=v` and `l≤T≤r`.
 

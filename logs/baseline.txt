@@ -1,0 +1,15 @@
+
+Running Baseline Vector Search
+Reading Data: ../data/dummy-data.bin
+# of points: 10000
+Finish Reading Data
+10000
+Reading Data: ../data/dummy-queries.bin
+# of points: 10000
+Finish Reading Data
+# data points:  10000
+# data point dim:  102
+# queries:      10000
+   cycles, kcycles, instructions, L1-misses, LLC-misses, branch-misses, task-clock, scale,  IPC, CPUs,  GHz 
+395264.54, 6160.17,    452604.26,   8112.41,     230.97,       3004.79,  103809.50,  1000, 1.15, 1.00, 3.81 
+
