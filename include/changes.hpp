@@ -68,7 +68,7 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec)
     __m256 sum_vec = _mm256_set1_ps(0.0);
 
     // Skip the first 2 dimensions
-    for (size_t i = 2; i < 102 - (102 % 8); i += 8)
+    for (size_t i = 2; i < 98; i += 8)
     {
         __m256 d_vec = _mm256_loadu_ps(&data_vec[i]);
         __m256 q_vec = _mm256_loadu_ps(&query_vec[i]);
@@ -80,7 +80,7 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec)
 
     // do the rest
     {
-        __m256i mask = _mm256_set_epi32(-1, -1, -1, -1, -1, -1, 0, 0);
+        __m256i mask = _mm256_set_epi32(-1, -1, -1, -1, 0, 0, 0, 0);
         __m256 d_vec = _mm256_castsi256_ps(
                 _mm256_and_si256(_mm256_castps_si256(_mm256_loadu_ps(&data_vec[94])), mask));
         __m256 q_vec = _mm256_castsi256_ps(
@@ -97,11 +97,12 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec)
 
     float sum = 0.0;
     // Skip the first 2 dimensions
-    for (size_t i = 2; i < data_vec.size(); ++i)
+    for (size_t i = 2; i < 102; ++i)
     {
         float diff = data_vec[i] - query_vec[i];
         sum += diff * diff;
     }
+
     return sum;
 
 #endif
