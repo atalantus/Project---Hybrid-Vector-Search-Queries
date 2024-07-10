@@ -8,6 +8,8 @@
 #include <numeric>
 #include <queue>
 
+#define BENCH 0
+
 using std::cout;
 using std::endl;
 using std::string;
@@ -41,6 +43,14 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, vec
     /** A basic method to compute the KNN results using sampling  **/
     const int K = 100;    // To find 100-NN
 
+#if BENCH
+
+    long handling_query = 0;
+    long distance_calc = 0;
+    long sorting = 0;
+
+#endif
+
     for (uint i = 0; i < nq; i++)
     {
         uint32_t query_type = queries[i][0];
@@ -56,6 +66,10 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, vec
             query_vec.push_back(queries[i][j]);
 
         vector<uint32_t> knn; // candidate knn
+
+#if BENCH
+        auto start = std::chrono::high_resolution_clock::now();
+#endif
 
         // Handling 4 types of queries
         if (query_type == 0)
@@ -100,11 +114,21 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, vec
             }
         }
 
+#if BENCH
+        auto end = std::chrono::high_resolution_clock::now();
+        handling_query += std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+#endif
+
         // build another vec to store the distance between knn[i] and query_vec
         vector<float> dists;
         dists.resize(knn.size());
         for (uint32_t j = 0; j < knn.size(); j++)
             dists[j] = compare_with_id(nodes[knn[j]], query_vec);
+
+#if BENCH
+        start = std::chrono::high_resolution_clock::now();
+        distance_calc += std::chrono::duration_cast<std::chrono::nanoseconds>(start - end).count();
+#endif
 
         vector<uint32_t> ids;
         ids.resize(knn.size());
@@ -120,6 +144,18 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, vec
         {
             knn_sorted[j] = knn[ids[j]];
         }
+
+#if BENCH
+        end = std::chrono::high_resolution_clock::now();
+        sorting += std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+#endif
+
         knn_results.push_back(knn_sorted);
     }
+
+#if BENCH
+    std::cerr << "handling query: " << handling_query << std::endl;
+    std::cerr << "distance calc: " << distance_calc << std::endl;
+    std::cerr << "sorting: " << sorting << std::endl;
+#endif
 }

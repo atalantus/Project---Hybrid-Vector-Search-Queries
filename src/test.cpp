@@ -1,12 +1,18 @@
 #include "io.h"
 #include "perfevent.hpp"
 
-#ifdef OPT_IMPL
+#if IMPL == 2
 
 #include "optimized.hpp"
 
+#elif IMPL == 3
+
+#include "changes.hpp"
+
 #else
+
 #include "baseline.hpp"
+
 #endif
 
 using std::cout;
@@ -16,10 +22,18 @@ using std::vector;
 
 int main(int argc, char** argv)
 {
-#ifdef OPT_IMPL
+#if IMPL == 2
+
     std::cout << "Running Optimized Vector Search\n";
+
+#elif IMPL == 3
+
+    std::cout << "Running Changed Vector Search\n";
+
 #else
+
     std::cout << "Running Baseline Vector Search\n";
+
 #endif
 
 
@@ -27,9 +41,23 @@ int main(int argc, char** argv)
     string query_path = "../data/dummy-queries.bin";
 
 #ifdef OPT_IMPL
-    string knn_save_path = "../result_data/dummy_optimized.bin";
+
 #else
+
+#endif
+
+#if IMPL == 2
+
+    string knn_save_path = "../result_data/dummy_optimized.bin";
+
+#elif IMPL == 3
+
+    string knn_save_path = "../result_data/dummy_changes.bin";
+
+#else
+
     string knn_save_path = "../result_data/dummy_baseline.bin";
+
 #endif
 
     // Also accept other path for source data
@@ -70,6 +98,8 @@ int main(int argc, char** argv)
     e.stopCounters();
     e.printReport(std::cout, 1000);
     std::cout << std::endl;
+
+    std::cerr << "Vector Search took " << e.getDurationInNs() << " ns" << std::endl;
 
     // save the results
     SaveKNN(knn_results, knn_save_path);

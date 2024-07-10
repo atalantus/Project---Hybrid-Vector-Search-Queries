@@ -66,8 +66,8 @@ struct PerfEvent {
 
     std::vector<event> events;
     std::vector<std::string> names;
-    std::chrono::time_point<std::chrono::steady_clock> startTime;
-    std::chrono::time_point<std::chrono::steady_clock> stopTime;
+    std::chrono::time_point<std::chrono::high_resolution_clock> startTime;
+    std::chrono::time_point<std::chrono::high_resolution_clock> stopTime;
 
     PerfEvent() {
         registerCounter("cycles", PERF_TYPE_HARDWARE, PERF_COUNT_HW_CPU_CYCLES);
@@ -117,7 +117,7 @@ struct PerfEvent {
             if (read(event.fd, &event.prev, sizeof(uint64_t) * 3) != sizeof(uint64_t) * 3)
                 std::cerr << "Error reading counter " << names[i] << std::endl;
         }
-        startTime = std::chrono::steady_clock::now();
+        startTime = std::chrono::high_resolution_clock::now();
     }
 
     ~PerfEvent() {
@@ -127,7 +127,7 @@ struct PerfEvent {
     }
 
     void stopCounters() {
-        stopTime = std::chrono::steady_clock::now();
+        stopTime = std::chrono::high_resolution_clock::now();
         for (unsigned i=0; i<events.size(); i++) {
             auto& event = events[i];
             if (read(event.fd, &event.data, sizeof(uint64_t) * 3) != sizeof(uint64_t) * 3)
@@ -136,8 +136,8 @@ struct PerfEvent {
         }
     }
 
-    double getDuration() {
-        return std::chrono::duration<double>(stopTime - startTime).count();
+    long getDurationInNs() {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(stopTime - startTime).count();
     }
 
     double getIPC() {
@@ -145,7 +145,7 @@ struct PerfEvent {
     }
 
     double getCPUs() {
-        return getCounter("task-clock") / (getDuration() * 1e9);
+        return getCounter("task-clock") / getDurationInNs();
     }
 
     double getGHz() {
@@ -311,7 +311,7 @@ struct PerfEventBlock {
         std::stringstream header;
         std::stringstream data;
         parameters.printParams(header,data);
-        PerfEvent::printCounter(header,data,"time sec",e->getDuration());
+        PerfEvent::printCounter(header,data,"time sec",e->getDurationInNs() / 1e9);
         e->printReport(header, data, scale);
         if (printHeader)
             std::cout << header.str() << std::endl;
