@@ -1,6 +1,6 @@
 mkdir -p "build"
 cd "build" || exit
-cmake ..
+cmake -DCMAKE_BUILD_TYPE=Release ..
 cmake --build . --target clean
 cmake --build .
 

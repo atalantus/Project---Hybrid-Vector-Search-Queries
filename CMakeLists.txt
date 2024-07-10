@@ -7,6 +7,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 add_compile_options(-I. -O3 -mavx2)
 
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    add_compile_options(-O3)
+else ()
+    add_compile_options(-O0 -g -Wall -Wpadded -Wpacked -Wpacked-not-aligned)
+endif ()
+
 add_executable(baseline.out src/test.cpp)
 target_include_directories(baseline.out PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
