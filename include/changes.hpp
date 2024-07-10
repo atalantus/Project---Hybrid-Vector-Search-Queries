@@ -17,6 +17,15 @@ typedef vector<float> d_vec_t;
 typedef vector<float> q_vec_t;
 
 #define FIND_WORST_SIMD 0
+
+/*
+ * Due to the order of operations changing when doing SIMD floating point math
+ * the calculated distances between vectors won't be exactly the same as if
+ * calculated without SIMD (smaller differences in the 5th decimal point).
+ *
+ * However, these changes can be big enough to yield a different result dataset
+ * than the baseline implementation.
+ */
 #define DIST_SIMD 1
 
 // very efficient horizontal add for eight 32-bit floats in a 256-bit register
