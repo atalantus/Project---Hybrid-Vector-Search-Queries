@@ -78,6 +78,8 @@ int main(int argc, char** argv)
 
     uint32_t num_data_dimensions = 102;
 
+    float sample_proportion = /*0.001*/1;
+
     // Read data points
     vector<vector<float>> nodes;
     ReadBin(source_path, num_data_dimensions, nodes);
@@ -93,13 +95,13 @@ int main(int argc, char** argv)
     PerfEvent e;
     e.startCounters();
 
-    vec_query(nodes, queries, knn_results);
+    vec_query(nodes, queries, sample_proportion, knn_results);
 
     e.stopCounters();
     e.printReport(std::cout, 1000);
     std::cout << std::endl;
 
-    std::cerr << "Vector Search took " << e.getDurationInNs() << " ns" << std::endl;
+    std::cerr << "Vector Search took " << e.getDurationInNs() << " ns @ " << std::setprecision(3) << e.getGHz() << " GHz" << std::endl;
 
     // save the results
     SaveKNN(knn_results, knn_save_path);

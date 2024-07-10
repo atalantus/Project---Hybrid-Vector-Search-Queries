@@ -16,7 +16,7 @@ using std::array;
 typedef vector<float> d_vec_t;
 typedef vector<float> q_vec_t;
 
-#define FIND_WORST_SIMD 0
+#define FIND_WORST_SIMD 1
 
 /*
  * Due to the order of operations changing when doing SIMD floating point math
@@ -144,13 +144,14 @@ private:
 
 #if FIND_WORST_SIMD
 
-        __m256 cur_worst_dist_vec = _mm256_load_ps(&dist_array[0]);
-        __m256i cur_worst_idx_vec = _mm256_set_epi32(7, 6, 5, 4, 3, 2, 1, 0);
+        __m256 cur_worst_dist_vec = _mm256_loadu_ps(&dist_array[0]);
+        __m256i cur_idx_vec = _mm256_set_epi32(7, 6, 5, 4, 3, 2, 1, 0);
+        __m256i cur_worst_idx_vec = cur_idx_vec;
 
         for (int i = 8; i < 96; i += 8)
         {
-            __m256 cur_dist_vec = _mm256_load_ps(&dist_array[i]);
-            __m256i cur_idx_vec = _mm256_set_epi32(i + 7, i + 6, i + 5, i + 4, i + 3, i + 2, i + 1, i);
+            __m256 cur_dist_vec = _mm256_loadu_ps(&dist_array[i]);
+            cur_idx_vec += 8;
 
             __m256 cmp_lt = _mm256_cmp_ps(cur_dist_vec, cur_worst_dist_vec, _CMP_GT_OQ);
 
@@ -160,15 +161,14 @@ private:
 
         // also do the remaining elements
         {
-            __m256 cur_dist_vec = _mm256_load_ps(&dist_array[92]);
-            __m256i cur_idx_vec = _mm256_set_epi32(99, 98, 97, 96, 95, 94, 93, 92);
+            __m256 cur_dist_vec = _mm256_loadu_ps(&dist_array[92]);
+            cur_idx_vec += 8;
 
             __m256 cmp_lt = _mm256_cmp_ps(cur_dist_vec, cur_worst_dist_vec, _CMP_GT_OQ);
 
             cur_worst_dist_vec = _mm256_blendv_ps(cur_worst_dist_vec, cur_dist_vec, cmp_lt);
             cur_worst_idx_vec = _mm256_blendv_epi8(cur_worst_idx_vec, cur_idx_vec, _mm256_castps_si256(cmp_lt));
         }
-
 
         float worst_distances[8];
         uint32_t worst_indices[8];
@@ -265,10 +265,9 @@ public:
     }
 };
 
-void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, vector<vector<uint32_t>>& knn_results)
+void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, float sample_proportion,
+               vector<vector<uint32_t>>& knn_results)
 {
-    float sample_proportion = 0.001;
-
     uint32_t n = nodes.size();
     uint32_t d = nodes[0].size();
     uint32_t nq = queries.size();

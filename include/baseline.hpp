@@ -27,10 +27,8 @@ float compare_with_id(const std::vector<float>& a, const std::vector<float>& b)
     return sum;
 }
 
-void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, vector<vector<uint32_t>>& knn_results)
+void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, float sample_proportion, vector<vector<uint32_t>>& knn_results)
 {
-    float sample_proportion = 0.001;
-
     uint32_t n = nodes.size();
     uint32_t d = nodes[0].size();
     uint32_t nq = queries.size();
