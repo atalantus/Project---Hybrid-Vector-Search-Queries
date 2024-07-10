@@ -17,6 +17,32 @@ typedef vector<float> d_vec_t;
 typedef vector<float> q_vec_t;
 
 #define FIND_WORST_SIMD 0
+#define DIST_SIMD 1
+
+// very efficient horizontal add for eight 32-bit floats in a 256-bit register
+// courtesy of: https://stackoverflow.com/a/13222410/6920681
+float mm256_hadd_ps(__m256 x)
+{
+    // hiQuad = ( x7, x6, x5, x4 )
+    const __m128 hiQuad = _mm256_extractf128_ps(x, 1);
+    // loQuad = ( x3, x2, x1, x0 )
+    const __m128 loQuad = _mm256_castps256_ps128(x);
+    // sumQuad = ( x3 + x7, x2 + x6, x1 + x5, x0 + x4 )
+    const __m128 sumQuad = _mm_add_ps(loQuad, hiQuad);
+    // loDual = ( -, -, x1 + x5, x0 + x4 )
+    const __m128 loDual = sumQuad;
+    // hiDual = ( -, -, x3 + x7, x2 + x6 )
+    const __m128 hiDual = _mm_movehl_ps(sumQuad, sumQuad);
+    // sumDual = ( -, -, x1 + x3 + x5 + x7, x0 + x2 + x4 + x6 )
+    const __m128 sumDual = _mm_add_ps(loDual, hiDual);
+    // lo = ( -, -, -, x0 + x2 + x4 + x6 )
+    const __m128 lo = sumDual;
+    // hi = ( -, -, -, x1 + x3 + x5 + x7 )
+    const __m128 hi = _mm_shuffle_ps(sumDual, sumDual, 0x1);
+    // sum = ( -, -, -, x0 + x1 + x2 + x3 + x4 + x5 + x6 + x7 )
+    const __m128 sum = _mm_add_ss(lo, hi);
+    return _mm_cvtss_f32(sum);
+}
 
 template<typename It, typename T, typename Compare = std::less<>>
 auto lower_bound_branchless(It low, It last, const T& val, Compare lt = {})
@@ -37,15 +63,48 @@ auto lower_bound_branchless(It low, It last, const T& val, Compare lt = {})
 
 float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec)
 {
+#if DIST_SIMD
+
+    __m256 sum_vec = _mm256_set1_ps(0.0);
+
+    // Skip the first 2 dimensions
+    for (size_t i = 2; i < 102 - (102 % 8); i += 8)
+    {
+        __m256 d_vec = _mm256_loadu_ps(&data_vec[i]);
+        __m256 q_vec = _mm256_loadu_ps(&query_vec[i]);
+
+        __m256 diff_vec = d_vec - q_vec;
+        diff_vec *= diff_vec;
+        sum_vec += diff_vec;
+    }
+
+    // do the rest
+    {
+        __m256i mask = _mm256_set_epi32(-1, -1, -1, -1, -1, -1, 0, 0);
+        __m256 d_vec = _mm256_castsi256_ps(
+                _mm256_and_si256(_mm256_castps_si256(_mm256_loadu_ps(&data_vec[94])), mask));
+        __m256 q_vec = _mm256_castsi256_ps(
+                _mm256_and_si256(_mm256_castps_si256(_mm256_loadu_ps(&query_vec[94])), mask));
+
+        __m256 diff_vec = d_vec - q_vec;
+        diff_vec *= diff_vec;
+        sum_vec += diff_vec;
+    }
+
+    return mm256_hadd_ps(sum_vec);
+
+#else
+
     float sum = 0.0;
     // Skip the first 2 dimensions
-    // TODO: SIMD
     for (size_t i = 2; i < data_vec.size(); ++i)
     {
         float diff = data_vec[i] - query_vec[i];
         sum += diff * diff;
     }
     return sum;
+
+#endif
 }
 
 class Knn
