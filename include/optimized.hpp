@@ -4,6 +4,8 @@
 #include <numeric>
 #include <queue>
 #include <array>
+#include <immintrin.h>
+#include <cstdint>
 
 using std::cout;
 using std::endl;
@@ -14,11 +16,15 @@ using std::array;
 typedef vector<float> d_vec_t;
 typedef vector<float> q_vec_t;
 
-template <typename It, typename T, typename Compare = std::less<>>
-auto lower_bound_branchless(It low, It last, const T& val, Compare lt = {}) {
+#define FIND_WORST_SIMD 1
+
+template<typename It, typename T, typename Compare = std::less<>>
+auto lower_bound_branchless(It low, It last, const T& val, Compare lt = {})
+{
     auto n = std::distance(low, last);
 
-    while (auto half = n / 2) {
+    while (auto half = n / 2)
+    {
         auto middle = low;
         std::advance(middle, half);
         low = lt(*middle, val) ? middle : low;
@@ -42,20 +48,17 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec)
     return sum;
 }
 
-template<size_t N>
 class Knn
 {
 private:
-    static_assert(N > 0);
-
     const vector<d_vec_t>& _nodes;
+    q_vec_t* query_vec;
 
     uint32_t fill;
     uint32_t worst;
-    q_vec_t* query_vec;
 
-    array<float, N> dist_array;
-    array<uint32_t, N> vec_idx_array;
+    alignas(32) array<float, 100> dist_array{};
+    alignas(32) array<uint32_t, 100> vec_idx_array{};
 
 public:
     explicit Knn(const vector<d_vec_t>& nodes) : _nodes(nodes)
@@ -68,11 +71,59 @@ public:
 private:
     inline void find_worst()
     {
+        assert(fill == 100);
+
+#if FIND_WORST_SIMD
+
+        __m256 cur_worst_dist_vec = _mm256_load_ps(&dist_array[0]);
+        __m256i cur_worst_idx_vec = _mm256_set_epi32(7, 6, 5, 4, 3, 2, 1, 0);
+
+        for (int i = 8; i < 96; i += 8)
+        {
+            __m256 cur_dist_vec = _mm256_load_ps(&dist_array[i]);
+            __m256i cur_idx_vec = _mm256_set_epi32(i + 7, i + 6, i + 5, i + 4, i + 3, i + 2, i + 1, i);
+
+            __m256 cmp_lt = _mm256_cmp_ps(cur_dist_vec, cur_worst_dist_vec, _CMP_GT_OQ);
+
+            cur_worst_dist_vec = _mm256_blendv_ps(cur_worst_dist_vec, cur_dist_vec, cmp_lt);
+            cur_worst_idx_vec = _mm256_blendv_epi8(cur_worst_idx_vec, cur_idx_vec, _mm256_castps_si256(cmp_lt));
+        }
+
+        // also do the remaining elements
+        {
+            __m256 cur_dist_vec = _mm256_load_ps(&dist_array[92]);
+            __m256i cur_idx_vec = _mm256_set_epi32(99, 98, 97, 96, 95, 94, 93, 92);
+
+            __m256 cmp_lt = _mm256_cmp_ps(cur_dist_vec, cur_worst_dist_vec, _CMP_GT_OQ);
+
+            cur_worst_dist_vec = _mm256_blendv_ps(cur_worst_dist_vec, cur_dist_vec, cmp_lt);
+            cur_worst_idx_vec = _mm256_blendv_epi8(cur_worst_idx_vec, cur_idx_vec, _mm256_castps_si256(cmp_lt));
+        }
+
+
+        float worst_distances[8];
+        uint32_t worst_indices[8];
+
+        _mm256_storeu_ps(&worst_distances[0], cur_worst_dist_vec);
+        _mm256_storeu_si256(reinterpret_cast<__m256i_u*>(&worst_indices[0]), cur_worst_idx_vec);
+
+        float worst_dist = worst_distances[0];
+        worst = worst_indices[0];
+        for (int i = 1; i < 8; ++i)
+        {
+            if (worst_distances[i] > worst_dist)
+            {
+                worst_dist = worst_distances[i];
+                worst = worst_indices[i];
+            }
+        }
+
+#else
+
         float cur_worst_dist = dist_array[0];
         worst = 0;
 
-        // TODO: SIMD
-        for (int i = 0; i < fill; ++i)
+        for (int i = 0; i < 100; ++i)
         {
             if (dist_array[i] > cur_worst_dist)
             {
@@ -80,6 +131,8 @@ private:
                 worst = i;
             }
         }
+
+#endif
     }
 
 public:
@@ -95,7 +148,7 @@ public:
         float dist = dist_to_query(_nodes[vec_idx], *query_vec);
         float worst_dist = dist_array[worst];
 
-        if (fill < N)
+        if (fill < 100)
         {
             // insert at the back
             worst = dist < worst_dist ? worst : fill;
@@ -159,7 +212,7 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, vec
     /** A basic method to compute the KNN results using sampling  **/
     const int K = 100;    // To find 100-NN
 
-    Knn<K> knn(nodes);
+    Knn knn(nodes);
 
     for (uint i = 0; i < nq; i++)
     {

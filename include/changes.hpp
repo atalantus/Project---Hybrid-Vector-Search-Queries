@@ -4,6 +4,8 @@
 #include <numeric>
 #include <queue>
 #include <array>
+#include <immintrin.h>
+#include <cstdint>
 
 using std::cout;
 using std::endl;
@@ -13,6 +15,8 @@ using std::array;
 
 typedef vector<float> d_vec_t;
 typedef vector<float> q_vec_t;
+
+#define FIND_WORST_SIMD 0
 
 template<typename It, typename T, typename Compare = std::less<>>
 auto lower_bound_branchless(It low, It last, const T& val, Compare lt = {})
@@ -44,79 +48,119 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec)
     return sum;
 }
 
-template<size_t N>
 class Knn
 {
 private:
-    static_assert(N > 0);
-
     const vector<d_vec_t>& _nodes;
-
-    uint32_t fill;
     q_vec_t* query_vec;
 
-    array<float, N> sorted_dist_array;
-    array<uint32_t, N> vec_idx_array;
+    uint32_t fill;
+    uint32_t worst;
+
+    alignas(32) array<float, 100> dist_array{};
+    alignas(32) array<uint32_t, 100> vec_idx_array{};
 
 public:
-    explicit Knn(const vector<d_vec_t>& nodes) : _nodes(nodes), sorted_dist_array(), vec_idx_array()
+    explicit Knn(const vector<d_vec_t>& nodes) : _nodes(nodes)
     {
         fill = 0;
+        worst = 0;
         query_vec = nullptr;
     }
 
+private:
+    inline void find_worst()
+    {
+        assert(fill == 100);
+
+#if FIND_WORST_SIMD
+
+        __m256 cur_worst_dist_vec = _mm256_load_ps(&dist_array[0]);
+        __m256i cur_worst_idx_vec = _mm256_set_epi32(7, 6, 5, 4, 3, 2, 1, 0);
+
+        for (int i = 8; i < 96; i += 8)
+        {
+            __m256 cur_dist_vec = _mm256_load_ps(&dist_array[i]);
+            __m256i cur_idx_vec = _mm256_set_epi32(i + 7, i + 6, i + 5, i + 4, i + 3, i + 2, i + 1, i);
+
+            __m256 cmp_lt = _mm256_cmp_ps(cur_dist_vec, cur_worst_dist_vec, _CMP_GT_OQ);
+
+            cur_worst_dist_vec = _mm256_blendv_ps(cur_worst_dist_vec, cur_dist_vec, cmp_lt);
+            cur_worst_idx_vec = _mm256_blendv_epi8(cur_worst_idx_vec, cur_idx_vec, _mm256_castps_si256(cmp_lt));
+        }
+
+        // also do the remaining elements
+        {
+            __m256 cur_dist_vec = _mm256_load_ps(&dist_array[92]);
+            __m256i cur_idx_vec = _mm256_set_epi32(99, 98, 97, 96, 95, 94, 93, 92);
+
+            __m256 cmp_lt = _mm256_cmp_ps(cur_dist_vec, cur_worst_dist_vec, _CMP_GT_OQ);
+
+            cur_worst_dist_vec = _mm256_blendv_ps(cur_worst_dist_vec, cur_dist_vec, cmp_lt);
+            cur_worst_idx_vec = _mm256_blendv_epi8(cur_worst_idx_vec, cur_idx_vec, _mm256_castps_si256(cmp_lt));
+        }
+
+
+        float worst_distances[8];
+        uint32_t worst_indices[8];
+
+        _mm256_storeu_ps(&worst_distances[0], cur_worst_dist_vec);
+        _mm256_storeu_si256(reinterpret_cast<__m256i_u*>(&worst_indices[0]), cur_worst_idx_vec);
+
+        float worst_dist = worst_distances[0];
+        worst = worst_indices[0];
+        for (int i = 1; i < 8; ++i)
+        {
+            if (worst_distances[i] > worst_dist)
+            {
+                worst_dist = worst_distances[i];
+                worst = worst_indices[i];
+            }
+        }
+
+#else
+
+        float cur_worst_dist = dist_array[0];
+        worst = 0;
+
+        for (int i = 0; i < 100; ++i)
+        {
+            if (dist_array[i] > cur_worst_dist)
+            {
+                cur_worst_dist = dist_array[i];
+                worst = i;
+            }
+        }
+
+#endif
+    }
+
+public:
     void init(q_vec_t* query_vector)
     {
         fill = 0;
+        worst = 0;
         query_vec = query_vector;
     }
 
     inline void check(uint32_t vec_idx)
     {
         float dist = dist_to_query(_nodes[vec_idx], *query_vec);
+        float worst_dist = dist_array[worst];
 
-        if (fill < N)
+        if (fill < 100)
         {
-            // find insert position
-            auto it = fill == 0 ? sorted_dist_array.begin() : lower_bound_branchless(sorted_dist_array.begin(),
-                                                                                     sorted_dist_array.begin() + fill,
-                                                                                     dist);
-            auto it_idx = it - sorted_dist_array.begin();
-            // move everything after to the right
-            std::memmove(&(*(it + 1)), &(*it), (fill - it_idx) * sizeof(float));
-            std::memmove(&vec_idx_array[it_idx + 1], &vec_idx_array[it_idx], (fill - it_idx) * sizeof(uint32_t));
-            // insert
-            *it = dist;
-            vec_idx_array[it_idx] = vec_idx;
-
+            // insert at the back
+            worst = dist < worst_dist ? worst : fill;
+            dist_array[fill] = dist;
+            vec_idx_array[fill] = vec_idx;
             ++fill;
-
-            for (uint32_t i = 1; i < fill; ++i)
-            {
-                // check sorting
-                assert(sorted_dist_array[i - 1] <= sorted_dist_array[i]);
-                assert(dist_to_query(_nodes[vec_idx_array[i - 1]], *query_vec) <=
-                       dist_to_query(_nodes[vec_idx_array[i]], *query_vec));
-            }
-        } else if (dist < sorted_dist_array[fill - 1])
+        } else if (dist < worst_dist)
         {
-            // find insert position
-            auto it = lower_bound_branchless(sorted_dist_array.begin(), sorted_dist_array.begin() + fill, dist);
-            auto it_idx = it - sorted_dist_array.begin();
-            // move everything after to the right, overwriting the worst vector
-            std::memmove(&(*(it + 1)), &(*it), (fill - it_idx - 1) * sizeof(float));
-            std::memmove(vec_idx_array.begin() + it_idx + 1, vec_idx_array.begin() + it_idx,
-                         (fill - it_idx - 1) * sizeof(uint32_t));
-            // insert
-            *it = dist;
-            vec_idx_array[it_idx] = vec_idx;
-
-            for (uint32_t i = 1; i < fill; ++i)
-            {
-                // check sorting
-                assert(sorted_dist_array[i - 1] < sorted_dist_array[i]);
-                assert(dist_to_query(_nodes[vec_idx - 1], *query_vec) < dist_to_query(_nodes[vec_idx], *query_vec));
-            }
+            // replace worst with new element and find new worst
+            dist_array[worst] = dist;
+            vec_idx_array[worst] = vec_idx;
+            find_worst();
             return;
         } else
         {
@@ -132,7 +176,23 @@ public:
 
     inline vector<uint32_t> get_knn_sorted()
     {
-        return vector<uint32_t>(vec_idx_array.begin(), vec_idx_array.end());
+        vector<uint32_t> ids;
+        ids.resize(fill);
+        std::iota(ids.begin(), ids.end(), 0);
+        std::sort(ids.begin(), ids.end(), [&](uint32_t a, uint32_t b)
+        {
+            return dist_array[a] < dist_array[b];
+        });
+
+        vector<uint32_t> knn_sorted;
+        knn_sorted.resize(fill);
+
+        for (int i = 0; i < fill; ++i)
+        {
+            knn_sorted[i] = vec_idx_array[ids[i]];
+        }
+
+        return knn_sorted;
     }
 };
 
@@ -152,7 +212,7 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, vec
     /** A basic method to compute the KNN results using sampling  **/
     const int K = 100;    // To find 100-NN
 
-    Knn<K> knn(nodes);
+    Knn knn(nodes);
 
     for (uint i = 0; i < nq; i++)
     {
