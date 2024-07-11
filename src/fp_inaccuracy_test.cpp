@@ -27,27 +27,15 @@ T compare_with_id(const std::vector<T>& a, const std::vector<T>& b)
     return sum;
 }
 
-float mm256_hadd_ps(__m256 x)
-{
-    // hiQuad = ( x7, x6, x5, x4 )
-    const __m128 hiQuad = _mm256_extractf128_ps(x, 1);
-    // loQuad = ( x3, x2, x1, x0 )
-    const __m128 loQuad = _mm256_castps256_ps128(x);
-    // sumQuad = ( x3 + x7, x2 + x6, x1 + x5, x0 + x4 )
-    const __m128 sumQuad = _mm_add_ps(loQuad, hiQuad);
-    // loDual = ( -, -, x1 + x5, x0 + x4 )
-    const __m128 loDual = sumQuad;
-    // hiDual = ( -, -, x3 + x7, x2 + x6 )
-    const __m128 hiDual = _mm_movehl_ps(sumQuad, sumQuad);
-    // sumDual = ( -, -, x1 + x3 + x5 + x7, x0 + x2 + x4 + x6 )
-    const __m128 sumDual = _mm_add_ps(loDual, hiDual);
-    // lo = ( -, -, -, x0 + x2 + x4 + x6 )
-    const __m128 lo = sumDual;
-    // hi = ( -, -, -, x1 + x3 + x5 + x7 )
-    const __m128 hi = _mm_shuffle_ps(sumDual, sumDual, 0x1);
-    // sum = ( -, -, -, x0 + x1 + x2 + x3 + x4 + x5 + x6 + x7 )
-    const __m128 sum = _mm_add_ss(lo, hi);
-    return _mm_cvtss_f32(sum);
+float hsum256_ps_avx(__m256 v) {
+    __m128 vlow = _mm256_castps256_ps128(v);
+    __m128 vhigh = _mm256_extractf128_ps(v, 1); // high 128
+    vlow = _mm_add_ps(vlow, vhigh);     // add the low 128
+    __m128 shuf = _mm_movehdup_ps(vlow);        // broadcast elements 3,1 to 2,0
+    __m128 sums = _mm_add_ps(vlow, shuf);
+    shuf = _mm_movehl_ps(shuf, sums); // high half -> low half
+    sums = _mm_add_ss(sums, shuf);
+    return _mm_cvtss_f32(sums);
 }
 
 float dist_to_query(const std::vector<float>& data_vec, const std::vector<float>& query_vec)
@@ -64,7 +52,7 @@ float dist_to_query(const std::vector<float>& data_vec, const std::vector<float>
         diff_vec *= diff_vec;
         sum_vec += diff_vec;
 
-        std::cout << "simd after " << i + 8 << " steps, sum: " << std::setprecision(15) << mm256_hadd_ps(sum_vec)
+        std::cout << "simd after " << i + 8 << " steps, sum: " << std::setprecision(15) << hsum256_ps_avx(sum_vec)
                   << std::endl;
     }
 
@@ -81,24 +69,30 @@ float dist_to_query(const std::vector<float>& data_vec, const std::vector<float>
         sum_vec += diff_vec;
     }
 
-    std::cout << "simd final sum: " << std::setprecision(15) << mm256_hadd_ps(sum_vec) << std::endl;
+    std::cout << "simd final sum: " << std::setprecision(15) << hsum256_ps_avx(sum_vec) << std::endl;
 
-    return mm256_hadd_ps(sum_vec);
+    return hsum256_ps_avx(sum_vec);
 }
 
 int main()
 {
     std::vector<float> vb{0.11232};
+    std::vector<double> vd{0.11232};
     for (int i = 1; i < 102; i++)
     {
         vb.push_back(vb[i - 1] * (i % 2 == 0 ? 1.321431 : -0.87382));
+        vd.push_back(vd[i - 1] * (i % 2 == 0 ? 1.321431 : -0.87382));
     }
 
     std::vector<float> vb2(vb.rbegin(), vb.rend());
+    std::vector<double> vd2(vd.rbegin(), vd.rend());
 
+    // The mathematically correct sum would be:
     auto fvb = compare_with_id<float>(vb, vb2);
     auto fvb2 = dist_to_query(vb, vb2);
 
+    auto fvd = compare_with_id<double>(vd, vd2);
+
     std::cout << "\nAbsolute Difference: " << std::setprecision(15) << std::abs(fvb - fvb2) << "\nFinal Values: " << fvb
-              << " " << fvb2 << std::endl;
+              << " " << fvb2 << " " << fvd << std::endl;
 }

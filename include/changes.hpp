@@ -6,6 +6,7 @@
 #include <array>
 #include <immintrin.h>
 #include <cstdint>
+#include "util.h"
 
 using std::cout;
 using std::endl;
@@ -28,51 +29,13 @@ constexpr size_t KNN_LIMIT = 100;
  * However, these changes can be big enough to yield a different result dataset
  * than the baseline implementation.
  */
-#define DIST_SIMD 0
+#define DIST_SIMD 1
 
+/*
+ * With SIMD the distance calculation becomes so fast (for "only" 100 dimensions at least)
+ * that any form of early bailout check does not seem to yield any performance benefit.
+ */
 #define DIST_BAIL_OUT 1
-
-// very efficient horizontal add for eight 32-bit floats in a 256-bit register
-// courtesy of: https://stackoverflow.com/a/13222410/6920681
-float mm256_hadd_ps(__m256 x)
-{
-    // hiQuad = ( x7, x6, x5, x4 )
-    const __m128 hiQuad = _mm256_extractf128_ps(x, 1);
-    // loQuad = ( x3, x2, x1, x0 )
-    const __m128 loQuad = _mm256_castps256_ps128(x);
-    // sumQuad = ( x3 + x7, x2 + x6, x1 + x5, x0 + x4 )
-    const __m128 sumQuad = _mm_add_ps(loQuad, hiQuad);
-    // loDual = ( -, -, x1 + x5, x0 + x4 )
-    const __m128 loDual = sumQuad;
-    // hiDual = ( -, -, x3 + x7, x2 + x6 )
-    const __m128 hiDual = _mm_movehl_ps(sumQuad, sumQuad);
-    // sumDual = ( -, -, x1 + x3 + x5 + x7, x0 + x2 + x4 + x6 )
-    const __m128 sumDual = _mm_add_ps(loDual, hiDual);
-    // lo = ( -, -, -, x0 + x2 + x4 + x6 )
-    const __m128 lo = sumDual;
-    // hi = ( -, -, -, x1 + x3 + x5 + x7 )
-    const __m128 hi = _mm_shuffle_ps(sumDual, sumDual, 0x1);
-    // sum = ( -, -, -, x0 + x1 + x2 + x3 + x4 + x5 + x6 + x7 )
-    const __m128 sum = _mm_add_ss(lo, hi);
-    return _mm_cvtss_f32(sum);
-}
-
-template<typename It, typename T, typename Compare = std::less<>>
-auto lower_bound_branchless(It low, It last, const T& val, Compare lt = {})
-{
-    auto n = std::distance(low, last);
-
-    while (auto half = n / 2)
-    {
-        auto middle = low;
-        std::advance(middle, half);
-        low = lt(*middle, val) ? middle : low;
-        n -= half;
-    }
-    if (lt(*low, val))
-        ++low;
-    return low;
-}
 
 float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_unused]] float worst)
 {
@@ -94,12 +57,21 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_u
         sum_vec += diff_vec;
     }
 
-    // check for early bailout
-    auto cur_sum = mm256_hadd_ps(sum_vec);
+    // bailout via horizontal sum
+    auto cur_sum = hsum256_ps_avx(sum_vec);
     if (cur_sum >= worst)
     {
         return std::numeric_limits<float>::infinity();
     }
+
+    // bailout via sum vector comparison
+//    __m256 bailout_vec = _mm256_set1_ps(worst);
+//    __m256i bailout_cmp_vec = _mm256_castps_si256(_mm256_cmp_ps(sum_vec, bailout_vec, _CMP_GE_OQ));
+//    if (_mm256_testz_si256(bailout_cmp_vec, bailout_cmp_vec) == 0)
+//    {
+//        bailouts++;
+//        return std::numeric_limits<float>::infinity();
+//    }
 
     for (; i < 98; i += 8)
     {
@@ -139,7 +111,7 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_u
         sum_vec += diff_vec;
     }
 
-    return mm256_hadd_ps(sum_vec);
+    return hsum256_ps_avx(sum_vec);
 
 #else
     #if DIST_BAIL_OUT
