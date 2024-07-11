@@ -89,7 +89,6 @@ float dist_to_query(const std::vector<float>& data_vec, const std::vector<float>
 int main()
 {
     std::vector<float> vb{0.11232};
-
     for (int i = 1; i < 102; i++)
     {
         vb.push_back(vb[i - 1] * (i % 2 == 0 ? 1.321431 : -0.87382));

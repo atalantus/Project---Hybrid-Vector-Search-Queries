@@ -13,6 +13,9 @@ else ()
     add_compile_options(-O0 -g -Wall -Wpadded -Wpacked -Wpacked-not-aligned)
 endif ()
 
+add_executable(compare.out src/compare_data.cpp)
+target_include_directories(compare.out PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
 add_executable(baseline.out src/test.cpp)
 target_include_directories(baseline.out PRIVATE ${CMAKE_SOURCE_DIR}/include)
 

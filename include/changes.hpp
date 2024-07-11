@@ -16,6 +16,8 @@ using std::array;
 typedef vector<float> d_vec_t;
 typedef vector<float> q_vec_t;
 
+constexpr size_t KNN_LIMIT = 100;
+
 #define FIND_WORST_SIMD 1
 
 /*
@@ -26,7 +28,9 @@ typedef vector<float> q_vec_t;
  * However, these changes can be big enough to yield a different result dataset
  * than the baseline implementation.
  */
-#define DIST_SIMD 1
+#define DIST_SIMD 0
+
+#define DIST_BAIL_OUT 1
 
 // very efficient horizontal add for eight 32-bit floats in a 256-bit register
 // courtesy of: https://stackoverflow.com/a/13222410/6920681
@@ -70,11 +74,44 @@ auto lower_bound_branchless(It low, It last, const T& val, Compare lt = {})
     return low;
 }
 
-float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec)
+float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_unused]] float worst)
 {
 #if DIST_SIMD
 
     __m256 sum_vec = _mm256_set1_ps(0.0);
+
+#if DIST_BAIL_OUT
+
+    // Skip the first 2 dimensions
+    size_t i = 2;
+    for (; i < 42; i += 8)
+    {
+        __m256 d_vec = _mm256_loadu_ps(&data_vec[i]);
+        __m256 q_vec = _mm256_loadu_ps(&query_vec[i]);
+
+        __m256 diff_vec = d_vec - q_vec;
+        diff_vec *= diff_vec;
+        sum_vec += diff_vec;
+    }
+
+    // check for early bailout
+    auto cur_sum = mm256_hadd_ps(sum_vec);
+    if (cur_sum >= worst)
+    {
+        return std::numeric_limits<float>::infinity();
+    }
+
+    for (; i < 98; i += 8)
+    {
+        __m256 d_vec = _mm256_loadu_ps(&data_vec[i]);
+        __m256 q_vec = _mm256_loadu_ps(&query_vec[i]);
+
+        __m256 diff_vec = d_vec - q_vec;
+        diff_vec *= diff_vec;
+        sum_vec += diff_vec;
+    }
+
+#else
 
     // Skip the first 2 dimensions
     for (size_t i = 2; i < 98; i += 8)
@@ -86,6 +123,8 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec)
         diff_vec *= diff_vec;
         sum_vec += diff_vec;
     }
+
+#endif
 
     // do the rest
     {
@@ -103,6 +142,33 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec)
     return mm256_hadd_ps(sum_vec);
 
 #else
+    #if DIST_BAIL_OUT
+
+    float sum = 0.0;
+
+    // Skip the first 2 dimensions
+    size_t i = 2;
+    for (; i < 52; ++i)
+    {
+        float diff = data_vec[i] - query_vec[i];
+        sum += diff * diff;
+    }
+
+    // check for early bailout
+    if (sum >= worst)
+    {
+        return std::numeric_limits<float>::infinity();
+    }
+
+    for (; i < 102; ++i)
+    {
+        float diff = data_vec[i] - query_vec[i];
+        sum += diff * diff;
+    }
+
+    return sum;
+
+#else
 
     float sum = 0.0;
     // Skip the first 2 dimensions
@@ -115,24 +181,28 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec)
     return sum;
 
 #endif
+#endif
 }
 
 class Knn
 {
 private:
-    const vector<d_vec_t>& _nodes;
-    q_vec_t* query_vec;
-
+    bool is_full;
     uint32_t fill;
     uint32_t worst;
 
-    alignas(32) array<float, 100> dist_array{};
-    alignas(32) array<uint32_t, 100> vec_idx_array{};
+    q_vec_t* query_vec;
+
+    alignas(32) array<float, KNN_LIMIT> dist_array{};
+    alignas(32) array<uint32_t, KNN_LIMIT> vec_idx_array{};
+
+    const vector<d_vec_t>& _nodes;
 
 public:
     explicit Knn(const vector<d_vec_t>& nodes) : _nodes(nodes)
     {
         fill = 0;
+        is_full = false;
         worst = 0;
         query_vec = nullptr;
     }
@@ -140,7 +210,7 @@ public:
 private:
     inline void find_worst()
     {
-        assert(fill == 100);
+        assert(fill == KNN_LIMIT);
 
 #if FIND_WORST_SIMD
 
@@ -151,7 +221,7 @@ private:
         for (int i = 8; i < 96; i += 8)
         {
             __m256 cur_dist_vec = _mm256_loadu_ps(&dist_array[i]);
-            cur_idx_vec += 8;
+            cur_idx_vec = _mm256_set_epi32(i + 7, i + 6, i + 5, i + 4, i + 3, i + 2, i + 1, i);
 
             __m256 cmp_lt = _mm256_cmp_ps(cur_dist_vec, cur_worst_dist_vec, _CMP_GT_OQ);
 
@@ -162,7 +232,7 @@ private:
         // also do the remaining elements
         {
             __m256 cur_dist_vec = _mm256_loadu_ps(&dist_array[92]);
-            cur_idx_vec += 8;
+            cur_idx_vec = _mm256_set_epi32(99, 98, 97, 96, 95, 94, 93, 92);
 
             __m256 cmp_lt = _mm256_cmp_ps(cur_dist_vec, cur_worst_dist_vec, _CMP_GT_OQ);
 
@@ -192,7 +262,7 @@ private:
         float cur_worst_dist = dist_array[0];
         worst = 0;
 
-        for (int i = 0; i < 100; ++i)
+        for (int i = 0; i < KNN_LIMIT; ++i)
         {
             if (dist_array[i] > cur_worst_dist)
             {
@@ -208,22 +278,25 @@ public:
     void init(q_vec_t* query_vector)
     {
         fill = 0;
+        is_full = false;
         worst = 0;
         query_vec = query_vector;
     }
 
     inline void check(uint32_t vec_idx)
     {
-        float dist = dist_to_query(_nodes[vec_idx], *query_vec);
         float worst_dist = dist_array[worst];
+        float bailout_dist = is_full ? worst_dist : std::numeric_limits<float>::infinity();
+        float dist = dist_to_query(_nodes[vec_idx], *query_vec, bailout_dist);
 
-        if (fill < 100)
+        if (!is_full)
         {
             // insert at the back
             worst = dist < worst_dist ? worst : fill;
             dist_array[fill] = dist;
             vec_idx_array[fill] = vec_idx;
             ++fill;
+            is_full = fill == KNN_LIMIT;
         } else if (dist < worst_dist)
         {
             // replace worst with new element and find new worst
@@ -238,7 +311,7 @@ public:
         }
     }
 
-    inline uint32_t size()
+    [[nodiscard]] inline uint32_t size() const
     {
         return fill;
     }
@@ -278,8 +351,6 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
     cout << "# queries:      " << nq << "\n";
 
     /** A basic method to compute the KNN results using sampling  **/
-    const int K = 100;    // To find 100-NN
-
     Knn knn(nodes);
 
     for (uint i = 0; i < nq; i++)
@@ -288,13 +359,8 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
         int32_t v = queries[i][1];
         float l = queries[i][2];
         float r = queries[i][3];
-        q_vec_t query_vec;
-
-        // first push_back 2 zeros for aligning with dataset
-        query_vec.push_back(0);
-        query_vec.push_back(0);
-        for (uint j = 4; j < queries[i].size(); j++)
-            query_vec.push_back(queries[i][j]);
+        // skip first 2 elements to align with data vectors
+        q_vec_t query_vec(queries[i].begin() + 2, queries[i].end());
 
         knn.init(&query_vec);
 
@@ -331,10 +397,10 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
         }
 
         // If the number of knn in the sampled data is less than K, then fill the rest with the last few nodes
-        if (knn.size() < K)
+        if (knn.size() < KNN_LIMIT)
         {
             uint32_t s = 1;
-            while (knn.size() < K)
+            while (knn.size() < KNN_LIMIT)
             {
                 knn.check(n - s);
                 s = s + 1;

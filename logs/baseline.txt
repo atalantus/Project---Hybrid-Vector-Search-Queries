@@ -10,5 +10,5 @@ Finish Reading Data
 # data point dim:  102
 # queries:      10000
      cycles,   kcycles, instructions, L1-misses, LLC-misses, branch-misses, task-clock, scale,  IPC, CPUs,  GHz 
-15478434.78, 196209.22,  14477577.96, 391472.32,   44283.64,     179003.64, 4099839.90,  1000, 0.94, 1.00, 3.78 
+15371260.26, 162789.11,  14476850.54, 390294.95,   20416.98,     180788.42, 4041984.30,  1000, 0.94, 1.00, 3.80 
 

@@ -15,7 +15,4 @@ echo "Running Changed Vector Search..."
 ./changes.out > ../logs/changes.txt
 echo ""
 echo "Comparing Results"
-cmp ../result_data/dummy_baseline.bin ../result_data/dummy_optimized.bin
-cmp ../result_data/dummy_baseline.bin ../result_data/dummy_changes.bin
-cmp ../result_data/dummy_optimized.bin ../result_data/dummy_changes.bin
-echo "Done"
+./compare.out ../result_data/dummy_baseline.bin ../result_data/dummy_optimized.bin ../result_data/dummy_changes.bin

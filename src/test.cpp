@@ -101,9 +101,25 @@ int main(int argc, char** argv)
     e.printReport(std::cout, 1000);
     std::cout << std::endl;
 
-    std::cerr << "Vector Search took " << e.getDurationInNs() << " ns @ " << std::setprecision(3) << e.getGHz() << " GHz" << std::endl;
+    std::cerr << "Vector Search took " << e.getDurationInNs() << " ns @ " << std::setprecision(3) << e.getGHz()
+              << " GHz" << std::endl;
 
     // save the results
     SaveKNN(knn_results, knn_save_path);
+
+    vector<vector<vector<float>>> fullKnn;
+    for (auto& knn_result: knn_results)
+    {
+        vector<vector<float>> queryKnns;
+
+        for (int j = 0; j < 100; ++j)
+        {
+            queryKnns.push_back(nodes[knn_result[j]]);
+        }
+
+        fullKnn.push_back(queryKnns);
+    }
+
+    SaveKNNFull(fullKnn, queries, std::string(knn_save_path) + ".dist");
     return 0;
 }
