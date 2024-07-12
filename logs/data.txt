@@ -1,0 +1,14 @@
+baseline pure stats:
+
+indexing data vectors:  861693471  86169  (~  7.11%)
+distance calculations: 6499374137 649937  (~ 53.65%)
+sorting knns:          4753993550 475399  (~ 39.24%)
+
+baseline pure SIMD dist calc stats:
+
+indexing data vectors:  859587281  85958  (~ 12.85%)
+distance calculations: 1207326746 120733  (~ 18.05%)
+sorting knns:          4622226686 462223  (~ 69.10%)
+
+optimized pure SIMD dist calc + KNN stats:
+

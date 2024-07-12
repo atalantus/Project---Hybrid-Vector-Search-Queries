@@ -2,13 +2,14 @@
  *  Example code using sampling to find KNN.
  */
 
+#define BENCH 1
+
 #include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <numeric>
 #include <queue>
-
-#define BENCH 0
+#include "util.h"
 
 using std::cout;
 using std::endl;
@@ -27,7 +28,8 @@ float compare_with_id(const std::vector<float>& a, const std::vector<float>& b)
     return sum;
 }
 
-void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, float sample_proportion, vector<vector<uint32_t>>& knn_results)
+void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, float sample_proportion,
+               vector<vector<uint32_t>>& knn_results)
 {
     uint32_t n = nodes.size();
     uint32_t d = nodes[0].size();
@@ -43,9 +45,9 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
 
 #if BENCH
 
-    long handling_query = 0;
-    long distance_calc = 0;
-    long sorting = 0;
+    uint64_t index_t = 0;
+    uint64_t dist_t = 0;
+    uint64_t sort_t = 0;
 
 #endif
 
@@ -66,7 +68,7 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
         vector<uint32_t> knn; // candidate knn
 
 #if BENCH
-        auto start = std::chrono::high_resolution_clock::now();
+        auto s1 = rdtsc();
 #endif
 
         // Handling 4 types of queries
@@ -113,8 +115,8 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
         }
 
 #if BENCH
-        auto end = std::chrono::high_resolution_clock::now();
-        handling_query += std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+        auto s2 = rdtsc();
+        index_t += s2 - s1;
 #endif
 
         // build another vec to store the distance between knn[i] and query_vec
@@ -124,8 +126,8 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
             dists[j] = compare_with_id(nodes[knn[j]], query_vec);
 
 #if BENCH
-        start = std::chrono::high_resolution_clock::now();
-        distance_calc += std::chrono::duration_cast<std::chrono::nanoseconds>(start - end).count();
+        auto s3 = rdtsc();
+        dist_t += s3 - s2;
 #endif
 
         vector<uint32_t> ids;
@@ -144,16 +146,16 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
         }
 
 #if BENCH
-        end = std::chrono::high_resolution_clock::now();
-        sorting += std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+        auto s4 = rdtsc();
+        sort_t += s4 - s3;
 #endif
 
         knn_results.push_back(knn_sorted);
     }
 
 #if BENCH
-    std::cerr << "handling query: " << handling_query << std::endl;
-    std::cerr << "distance calc: " << distance_calc << std::endl;
-    std::cerr << "sorting: " << sorting << std::endl;
+    std::cerr << "index: " << index_t << " " << index_t / (double) nq << std::endl;
+    std::cerr << "dist: " << dist_t << " " << dist_t / (double) nq << std::endl;
+    std::cerr << "sort: " << sort_t << " " << sort_t / (double) nq << std::endl;
 #endif
 }

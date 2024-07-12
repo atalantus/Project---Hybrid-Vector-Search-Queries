@@ -3,11 +3,11 @@
 
 #if IMPL == 2
 
-#include "optimized.hpp"
+#include "optimized_1.hpp"
 
 #elif IMPL == 3
 
-#include "changes.hpp"
+#include "optimized_2.hpp"
 
 #else
 
@@ -24,11 +24,11 @@ int main(int argc, char** argv)
 {
 #if IMPL == 2
 
-    std::cout << "Running Optimized Vector Search\n";
+    std::cout << "Running Optimized_1 Vector Search\n";
 
 #elif IMPL == 3
 
-    std::cout << "Running Changed Vector Search\n";
+    std::cout << "Running Optimized_2 Vector Search\n";
 
 #else
 
@@ -40,19 +40,13 @@ int main(int argc, char** argv)
     string source_path = "../data/dummy-data.bin";
     string query_path = "../data/dummy-queries.bin";
 
-#ifdef OPT_IMPL
-
-#else
-
-#endif
-
 #if IMPL == 2
 
-    string knn_save_path = "../result_data/dummy_optimized.bin";
+    string knn_save_path = "../result_data/dummy_optimized_1.bin";
 
 #elif IMPL == 3
 
-    string knn_save_path = "../result_data/dummy_changes.bin";
+    string knn_save_path = "../result_data/dummy_optimized_2.bin";
 
 #else
 

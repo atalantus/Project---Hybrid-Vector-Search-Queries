@@ -1,3 +1,5 @@
+#pragma once
+
 #include <algorithm>
 #include <fstream>
 #include <iostream>
@@ -5,8 +7,9 @@
 #include <queue>
 #include <array>
 #include <immintrin.h>
+#include <functional>
 #include <cstdint>
-#include "util.h"
+#include <cassert>
 
 using std::cout;
 using std::endl;
@@ -19,23 +22,40 @@ typedef vector<float> q_vec_t;
 
 constexpr size_t KNN_LIMIT = 100;
 
-#define FIND_WORST_SIMD 1
+
 
 /*
- * Due to the order of operations changing when doing SIMD floating point math
- * the calculated distances between vectors won't be exactly the same as if
- * calculated without SIMD (smaller differences in the 5th decimal point).
- *
- * However, these changes can be big enough to yield a different result dataset
- * than the baseline implementation.
+ * Fastest way to horizontally add floats of a 256-bit register.
+ * Courtesy of: https://stackoverflow.com/a/35270026/6920681
  */
-#define DIST_SIMD 1
+float hsum256_ps_avx(__m256 v)
+{
+    __m128 vlow = _mm256_castps256_ps128(v);
+    __m128 vhigh = _mm256_extractf128_ps(v, 1); // high 128
+    vlow = _mm_add_ps(vlow, vhigh);     // add the low 128
+    __m128 shuf = _mm_movehdup_ps(vlow);        // broadcast elements 3,1 to 2,0
+    __m128 sums = _mm_add_ps(vlow, shuf);
+    shuf = _mm_movehl_ps(shuf, sums); // high half -> low half
+    sums = _mm_add_ss(sums, shuf);
+    return _mm_cvtss_f32(sums);
+}
 
-/*
- * With SIMD the distance calculation becomes so fast (for "only" 100 dimensions at least)
- * that any form of early bailout check does not seem to yield any performance benefit.
- */
-#define DIST_BAIL_OUT 1
+template<typename It, typename T, typename Compare = std::less<>>
+auto lower_bound_branchless(It low, It last, const T& val, Compare lt = {})
+{
+    auto n = std::distance(low, last);
+
+    while (auto half = n / 2)
+    {
+        auto middle = low;
+        std::advance(middle, half);
+        low = lt(*middle, val) ? middle : low;
+        n -= half;
+    }
+    if (lt(*low, val))
+        ++low;
+    return low;
+}
 
 float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_unused]] float worst)
 {
@@ -310,75 +330,105 @@ public:
     }
 };
 
-void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, float sample_proportion,
-               vector<vector<uint32_t>>& knn_results)
+class KnnHeap
 {
-    uint32_t n = nodes.size();
-    uint32_t d = nodes[0].size();
-    uint32_t nq = queries.size();
-    uint32_t sn = uint32_t(sample_proportion * n);
+private:
+    bool is_full;
+    uint32_t fill;
 
-    cout << "# data points:  " << n << "\n";
-    cout << "# data point dim:  " << d << "\n";
-    cout << "# queries:      " << nq << "\n";
+    q_vec_t* query_vec;
 
-    /** A basic method to compute the KNN results using sampling  **/
-    Knn knn(nodes);
-
-    for (uint i = 0; i < nq; i++)
+    struct knn_heap_el
     {
-        uint32_t query_type = queries[i][0];
-        int32_t v = queries[i][1];
-        float l = queries[i][2];
-        float r = queries[i][3];
-        // skip first 2 elements to align with data vectors
-        q_vec_t query_vec(queries[i].begin() + 2, queries[i].end());
+        float dist;
+        uint32_t node_idx;
 
-        knn.init(&query_vec);
+        knn_heap_el() : dist{0}, node_idx{0}
+        {}
 
-        // Handling 4 types of queries
-        if (query_type == 0)
-        {  // only ANN
-            for (uint32_t j = 0; j < sn; j++)
-            {
-                knn.check(j);
-            }
-        } else if (query_type == 1)
-        { // equal + ANN
-            for (uint32_t j = 0; j < sn; j++)
-            {
-                if (nodes[j][0] == v)
-                {
-                    knn.check(j);
-                }
-            }
-        } else if (query_type == 2)
-        { // range + ANN
-            for (uint32_t j = 0; j < sn; j++)
-            {
-                if (nodes[j][1] >= l && nodes[j][1] <= r)
-                    knn.check(j);
-            }
-        } else if (query_type == 3)
-        { // equal + range + ANN
-            for (uint32_t j = 0; j < sn; j++)
-            {
-                if (nodes[j][0] == v && nodes[j][1] >= l && nodes[j][1] <= r)
-                    knn.check(j);
-            }
-        }
+        knn_heap_el(float d, uint32_t i) : dist{d}, node_idx{i}
+        {}
+    };
 
-        // If the number of knn in the sampled data is less than K, then fill the rest with the last few nodes
-        if (knn.size() < KNN_LIMIT)
-        {
-            uint32_t s = 1;
-            while (knn.size() < KNN_LIMIT)
-            {
-                knn.check(n - s);
-                s = s + 1;
-            }
-        }
+    std::function<bool(const knn_heap_el& a, const knn_heap_el& b)> compare_heap_el = [](const knn_heap_el& a,
+                                                                                         const knn_heap_el& b)
+    { return a.dist < b.dist; };
 
-        knn_results.push_back(knn.get_knn_sorted());
+    array<knn_heap_el, KNN_LIMIT> knn_heap;
+
+    const vector<d_vec_t>& _nodes;
+
+public:
+    explicit KnnHeap(const vector<d_vec_t>& nodes) : _nodes(nodes)
+    {
+        fill = 0;
+        is_full = false;
+        query_vec = nullptr;
     }
-}
+
+public:
+    void init(q_vec_t* query_vector)
+    {
+        fill = 0;
+        is_full = false;
+        query_vec = query_vector;
+    }
+
+    inline void check(uint32_t vec_idx)
+    {
+        float worst_dist = knn_heap.front().dist;
+        float bailout_dist = is_full ? worst_dist : std::numeric_limits<float>::infinity();
+        float dist = dist_to_query(_nodes[vec_idx], *query_vec, bailout_dist);
+
+        if (!is_full)
+        {
+            // insert at the back
+            knn_heap[fill++] = {dist, vec_idx};
+            std::push_heap(knn_heap.begin(), knn_heap.begin() + fill, compare_heap_el);
+            is_full = fill == KNN_LIMIT;
+
+            assert(std::is_heap(knn_heap.begin(), knn_heap.begin() + fill, compare_heap_el));
+        } else if (dist < worst_dist)
+        {
+            assert(fill == KNN_LIMIT);
+            // replace worst with new element and find new worst
+            std::pop_heap(knn_heap.begin(), knn_heap.end(), compare_heap_el);
+            knn_heap.back().dist = dist;
+            knn_heap.back().node_idx = vec_idx;
+            std::push_heap(knn_heap.begin(), knn_heap.end(), compare_heap_el);
+
+            assert(std::is_heap(knn_heap.begin(), knn_heap.end(), compare_heap_el));
+            return;
+        } else
+        {
+            // new element is not better than the worst element in array
+            return;
+        }
+    }
+
+    [[nodiscard]] inline uint32_t size() const
+    {
+        return fill;
+    }
+
+    inline vector<uint32_t> get_knn_sorted()
+    {
+        assert(is_full);
+        assert(std::is_heap(knn_heap.begin(), knn_heap.end(), compare_heap_el));
+        assert(knn_heap.end() == (knn_heap.begin() + KNN_LIMIT));
+
+        vector<uint32_t> knn_sorted;
+        knn_sorted.resize(KNN_LIMIT);
+
+        for (int i = 100; i > 0; --i)
+        {
+            knn_sorted[i - 1] = knn_heap.front().node_idx;
+            std::pop_heap(knn_heap.begin(), knn_heap.begin() + i, compare_heap_el);
+        }
+
+        is_full = false;
+        fill = 0;
+
+        return knn_sorted;
+    }
+};
