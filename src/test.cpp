@@ -95,7 +95,7 @@ int main(int argc, char** argv)
     e.printReport(std::cout, 1000);
     std::cout << std::endl;
 
-    std::cerr << "Vector Search took " << e.getDurationInNs() << " ns @ " << std::setprecision(3) << e.getGHz()
+    std::cerr << "Vector Search took " << e.getDurationInNs() / 1e6 << " ms @ " << std::setprecision(3) << e.getGHz()
               << " GHz" << std::endl;
 
     // save the results

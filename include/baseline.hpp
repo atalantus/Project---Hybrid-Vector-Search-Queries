@@ -8,7 +8,7 @@
  *  Example code using sampling to find KNN.
  */
 
-#define BENCH 1
+#define ENABLE_PERF_DBG 1
 
 #include "optimized_impl.h"
 #include "util.h"
@@ -40,13 +40,11 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
 
     /** A basic method to compute the KNN results using sampling  **/
 
-#if BENCH
-
-    uint64_t index_t = 0;
-    uint64_t dist_t = 0;
-    uint64_t sort_t = 0;
-
-#endif
+    PERF_DBG(
+            uint64_t index_t = 0;
+            uint64_t dist_t = 0;
+            uint64_t sort_t = 0;
+    )
 
     for (uint i = 0; i < nq; i++)
     {
@@ -64,9 +62,7 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
 
         vector<uint32_t> knn; // candidate knn
 
-#if BENCH
-        auto s1 = std::chrono::high_resolution_clock::now();
-#endif
+        PERF_DBG(auto s1 = rdtsc();)
 
         // Handling 4 types of queries
         if (query_type == 0)
@@ -111,11 +107,7 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
             }
         }
 
-#if BENCH
-        auto s2 = std::chrono::high_resolution_clock::now();
-        index_t += std::chrono::duration_cast<std::chrono::nanoseconds>(s2 - s1).count();
-        s2 = std::chrono::high_resolution_clock::now();
-#endif
+        PERF_DBG(auto s2 = rdtsc();index_t += s2 - s1;)
 
         // build another vec to store the distance between knn[i] and query_vec
         vector<float> dists;
@@ -123,11 +115,7 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
         for (uint32_t j = 0; j < knn.size(); j++)
             dists[j] = compare_with_id(nodes[knn[j]], query_vec);
 
-#if BENCH
-        auto s3 = std::chrono::high_resolution_clock::now();
-        dist_t += std::chrono::duration_cast<std::chrono::nanoseconds>(s3 - s2).count();
-        s3 = std::chrono::high_resolution_clock::now();
-#endif
+        PERF_DBG(auto s3 = rdtsc();dist_t += s3 - s2;)
 
         vector<uint32_t> ids;
         ids.resize(knn.size());
@@ -144,18 +132,14 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
             knn_sorted[j] = knn[ids[j]];
         }
 
-#if BENCH
-        auto s4 = std::chrono::high_resolution_clock::now();
-        sort_t += std::chrono::duration_cast<std::chrono::nanoseconds>(s4 - s3).count();
-        s4 = std::chrono::high_resolution_clock::now();
-#endif
+        PERF_DBG(auto s4 = rdtsc();sort_t += s4 - s3;)
 
         knn_results.push_back(knn_sorted);
     }
 
-#if BENCH
-    std::cerr << "index: " << index_t << " " << index_t / (double) nq << std::endl;
-    std::cerr << "dist: " << dist_t << " " << dist_t / (double) nq << std::endl;
-    std::cerr << "sort: " << sort_t << " " << sort_t / (double) nq << std::endl;
-#endif
+    PERF_DBG(
+            std::cerr << "indexing:\t" << index_t << std::endl;
+            std::cerr << "dist calc:\t" << dist_t << std::endl;
+            std::cerr << "sorting:\t" << sort_t << std::endl;
+    )
 }

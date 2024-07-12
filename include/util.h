@@ -3,7 +3,14 @@
 #include <cstdint>
 #include <immintrin.h>
 
-uint64_t rdtsc(){
+#if ENABLE_PERF_DBG
+#define PERF_DBG(...) __VA_ARGS__;
+#else
+#define PERF_DBG(...)
+#endif
+
+uint64_t rdtsc()
+{
     return __rdtsc();
 }
 

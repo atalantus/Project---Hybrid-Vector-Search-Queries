@@ -9,9 +9,13 @@
 #include <immintrin.h>
 #include <cstdint>
 
-#define USE_HEAP_KNN 1
+#define ENABLE_PERF_DBG 1
+
+#define USE_HEAP_KNN 0
 
 #define FIND_WORST_SIMD 1
+
+#define SINGLE_SORTED 1
 
 /*
  * Due to the order of operations changing when doing SIMD floating point math
@@ -110,4 +114,10 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
 
         knn_results.push_back(knn.get_knn_sorted());
     }
+
+    PERF_DBG(
+            std::cerr << "dist calc:\t" << dist_calc_t << std::endl;
+            std::cerr << "knn check:\t" << knn_check_t << std::endl;
+            std::cerr << "knn sort:\t" << knn_sort_t << std::endl;
+    )
 }

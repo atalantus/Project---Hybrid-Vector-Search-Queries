@@ -10,6 +10,7 @@
 #include <functional>
 #include <cstdint>
 #include <cassert>
+#include "util.h"
 
 using std::cout;
 using std::endl;
@@ -124,7 +125,8 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_u
     // do the rest
     {
         auto r = (VEC_DIM - 2) % 8;
-        auto cm = [r](size_t n) -> int { return n <= r ? -1 : 0;};
+        auto cm = [r](size_t n) -> int
+        { return n <= r ? -1 : 0; };
         __m256i mask = _mm256_set_epi32(cm(1), cm(2), cm(3), cm(4), cm(5), cm(6), cm(7), 0);
         __m256 d_vec = _mm256_castsi256_ps(
                 _mm256_and_si256(_mm256_castps_si256(_mm256_loadu_ps(&data_vec[VEC_DIM - 8])), mask));
@@ -181,19 +183,26 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_u
 #endif
 }
 
+PERF_DBG(
+        uint64_t dist_calc_t = 0;
+        uint64_t knn_check_t = 0;
+        uint64_t knn_sort_t = 0;
+)
+
 class Knn
 {
 private:
-    bool is_full;
+    q_vec_t* query_vec;
+
+    const vector<d_vec_t>& _nodes;
+
+    array<float, KNN_LIMIT> dist_array{};
+    array<uint32_t, KNN_LIMIT> vec_idx_array{};
+
     uint32_t fill;
     uint32_t worst;
 
-    q_vec_t* query_vec;
-
-    alignas(32) array<float, KNN_LIMIT> dist_array{};
-    alignas(32) array<uint32_t, KNN_LIMIT> vec_idx_array{};
-
-    const vector<d_vec_t>& _nodes;
+    bool is_full;
 
 public:
     explicit Knn(const vector<d_vec_t>& nodes) : _nodes(nodes)
@@ -213,12 +222,12 @@ private:
 
         __m256 cur_worst_dist_vec = _mm256_loadu_ps(&dist_array[0]);
         __m256i cur_idx_vec = _mm256_set_epi32(7, 6, 5, 4, 3, 2, 1, 0);
+        __m256i idx_add_vec = _mm256_set1_epi32(8);
         __m256i cur_worst_idx_vec = cur_idx_vec;
 
-        for (int i = 8; i < KNN_LIMIT - (KNN_LIMIT % 8); i += 8)
+        for (int i = 8; i < KNN_LIMIT - (KNN_LIMIT % 8); i += 8, cur_idx_vec += idx_add_vec)
         {
             __m256 cur_dist_vec = _mm256_loadu_ps(&dist_array[i]);
-            cur_idx_vec = _mm256_set_epi32(i + 7, i + 6, i + 5, i + 4, i + 3, i + 2, i + 1, i);
 
             __m256 cmp_lt = _mm256_cmp_ps(cur_dist_vec, cur_worst_dist_vec, _CMP_GT_OQ);
 
@@ -228,9 +237,9 @@ private:
 
         // also do the remaining elements
         {
-            __m256 cur_dist_vec = _mm256_loadu_ps(&dist_array[KNN_LIMIT - 8]);
             cur_idx_vec = _mm256_set_epi32(KNN_LIMIT - 1, KNN_LIMIT - 2, KNN_LIMIT - 3, KNN_LIMIT - 4, KNN_LIMIT - 5,
                                            KNN_LIMIT - 6, KNN_LIMIT - 7, KNN_LIMIT - 8);
+            __m256 cur_dist_vec = _mm256_loadu_ps(&dist_array[KNN_LIMIT - 8]);
 
             __m256 cmp_lt = _mm256_cmp_ps(cur_dist_vec, cur_worst_dist_vec, _CMP_GT_OQ);
 
@@ -285,7 +294,9 @@ public:
     {
         float worst_dist = dist_array[worst];
         float bailout_dist = is_full ? worst_dist : std::numeric_limits<float>::infinity();
+        PERF_DBG(auto s1 = rdtsc();)
         float dist = dist_to_query(_nodes[vec_idx], *query_vec, bailout_dist);
+        PERF_DBG(auto s2 = rdtsc();dist_calc_t += s2 - s1;)
 
         if (!is_full)
         {
@@ -301,12 +312,12 @@ public:
             dist_array[worst] = dist;
             vec_idx_array[worst] = vec_idx;
             find_worst();
-            return;
         } else
         {
             // new element is not better than the worst element in array
-            return;
         }
+
+        PERF_DBG(knn_check_t += rdtsc() - s2;)
     }
 
     [[nodiscard]] inline uint32_t size() const
@@ -316,6 +327,31 @@ public:
 
     inline vector<uint32_t> get_knn_sorted()
     {
+        PERF_DBG(auto s = rdtsc();)
+
+        vector<uint32_t> knn_sorted;
+        knn_sorted.resize(fill);
+
+#if SINGLE_SORTED
+
+        std::array<std::pair<float, uint32_t>, KNN_LIMIT> sorted_knn;
+
+        for (int i = 0; i < fill; ++i)
+        {
+            sorted_knn[i] = {dist_array[i], vec_idx_array[i]};
+        }
+
+        std::sort(sorted_knn.begin(), sorted_knn.begin() + fill,
+                  [](const auto& a, const auto& b)
+                  { return a.first < b.first; });
+
+        for (int i = 0; i < fill; ++i)
+        {
+            knn_sorted[i] = sorted_knn[i].second;
+        }
+
+#else
+
         vector<uint32_t> ids;
         ids.resize(fill);
         std::iota(ids.begin(), ids.end(), 0);
@@ -324,13 +360,14 @@ public:
             return dist_array[a] < dist_array[b];
         });
 
-        vector<uint32_t> knn_sorted;
-        knn_sorted.resize(fill);
-
         for (int i = 0; i < fill; ++i)
         {
             knn_sorted[i] = vec_idx_array[ids[i]];
         }
+
+#endif
+
+        PERF_DBG(knn_sort_t += rdtsc() - s;)
 
         return knn_sorted;
     }
@@ -384,7 +421,9 @@ public:
     {
         float worst_dist = knn_heap.front().dist;
         float bailout_dist = is_full ? worst_dist : std::numeric_limits<float>::infinity();
+        PERF_DBG(auto s = rdtsc();)
         float dist = dist_to_query(_nodes[vec_idx], *query_vec, bailout_dist);
+        PERF_DBG(auto s2 = rdtsc();dist_calc_t += s2 - s;)
 
         if (!is_full)
         {
@@ -404,12 +443,12 @@ public:
             std::push_heap(knn_heap.begin(), knn_heap.end(), compare_heap_el);
 
             assert(std::is_heap(knn_heap.begin(), knn_heap.end(), compare_heap_el));
-            return;
         } else
         {
             // new element is not better than the worst element in array
-            return;
         }
+
+        PERF_DBG(knn_check_t += rdtsc() - s2;)
     }
 
     [[nodiscard]] inline uint32_t size() const
@@ -419,6 +458,7 @@ public:
 
     inline vector<uint32_t> get_knn_sorted()
     {
+        PERF_DBG(auto s = rdtsc();)
         assert(std::is_heap(knn_heap.begin(), knn_heap.begin() + fill, compare_heap_el));
 
         vector<uint32_t> knn_sorted;
@@ -432,6 +472,8 @@ public:
 
         is_full = false;
         fill = 0;
+
+        PERF_DBG(knn_sort_t += rdtsc() - s;)
 
         return knn_sorted;
     }
