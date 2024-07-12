@@ -20,9 +20,9 @@ using std::array;
 typedef vector<float> d_vec_t;
 typedef vector<float> q_vec_t;
 
-constexpr size_t KNN_LIMIT = 100;
+constexpr size_t KNN_LIMIT = 100; // at least 8
 
-
+constexpr size_t VEC_DIM = 102; // at least 8
 
 /*
  * Fastest way to horizontally add floats of a 256-bit register.
@@ -67,7 +67,7 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_u
 
     // Skip the first 2 dimensions
     size_t i = 2;
-    for (; i < 42; i += 8)
+    for (; i < (VEC_DIM / 16 * 8) + 2; i += 8)
     {
         __m256 d_vec = _mm256_loadu_ps(&data_vec[i]);
         __m256 q_vec = _mm256_loadu_ps(&query_vec[i]);
@@ -93,7 +93,7 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_u
 //        return std::numeric_limits<float>::infinity();
 //    }
 
-    for (; i < 98; i += 8)
+    for (; i < VEC_DIM - (VEC_DIM % 8) + 2; i += 8)
     {
         __m256 d_vec = _mm256_loadu_ps(&data_vec[i]);
         __m256 q_vec = _mm256_loadu_ps(&query_vec[i]);
@@ -106,7 +106,7 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_u
 #else
 
     // Skip the first 2 dimensions
-    for (size_t i = 2; i < 98; i += 8)
+    for (size_t i = 2; i < VEC_DIM - (VEC_DIM % 8) + 2; i += 8)
     {
         __m256 d_vec = _mm256_loadu_ps(&data_vec[i]);
         __m256 q_vec = _mm256_loadu_ps(&query_vec[i]);
@@ -120,11 +120,13 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_u
 
     // do the rest
     {
-        __m256i mask = _mm256_set_epi32(-1, -1, -1, -1, 0, 0, 0, 0);
+        auto r = VEC_DIM % 8;
+        auto cm = [r](size_t n) -> int { return n >= r ? -1 : 0;};
+        __m256i mask = _mm256_set_epi32(cm(1), cm(2), cm(3), cm(4), cm(5), cm(6), cm(7), 0);
         __m256 d_vec = _mm256_castsi256_ps(
-                _mm256_and_si256(_mm256_castps_si256(_mm256_loadu_ps(&data_vec[94])), mask));
+                _mm256_and_si256(_mm256_castps_si256(_mm256_loadu_ps(&data_vec[VEC_DIM - (VEC_DIM % 8)])), mask));
         __m256 q_vec = _mm256_castsi256_ps(
-                _mm256_and_si256(_mm256_castps_si256(_mm256_loadu_ps(&query_vec[94])), mask));
+                _mm256_and_si256(_mm256_castps_si256(_mm256_loadu_ps(&query_vec[VEC_DIM - (VEC_DIM % 8)])), mask));
 
         __m256 diff_vec = d_vec - q_vec;
         diff_vec *= diff_vec;
@@ -140,7 +142,7 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_u
 
     // Skip the first 2 dimensions
     size_t i = 2;
-    for (; i < 52; ++i)
+    for (; i < VEC_DIM / 2; ++i)
     {
         float diff = data_vec[i] - query_vec[i];
         sum += diff * diff;
@@ -152,7 +154,7 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_u
         return std::numeric_limits<float>::infinity();
     }
 
-    for (; i < 102; ++i)
+    for (; i < VEC_DIM; ++i)
     {
         float diff = data_vec[i] - query_vec[i];
         sum += diff * diff;
@@ -164,7 +166,7 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_u
 
     float sum = 0.0;
     // Skip the first 2 dimensions
-    for (size_t i = 2; i < 102; ++i)
+    for (size_t i = 2; i < VEC_DIM; ++i)
     {
         float diff = data_vec[i] - query_vec[i];
         sum += diff * diff;
@@ -210,7 +212,7 @@ private:
         __m256i cur_idx_vec = _mm256_set_epi32(7, 6, 5, 4, 3, 2, 1, 0);
         __m256i cur_worst_idx_vec = cur_idx_vec;
 
-        for (int i = 8; i < 96; i += 8)
+        for (int i = 8; i < KNN_LIMIT - (KNN_LIMIT % 8); i += 8)
         {
             __m256 cur_dist_vec = _mm256_loadu_ps(&dist_array[i]);
             cur_idx_vec = _mm256_set_epi32(i + 7, i + 6, i + 5, i + 4, i + 3, i + 2, i + 1, i);
@@ -223,8 +225,9 @@ private:
 
         // also do the remaining elements
         {
-            __m256 cur_dist_vec = _mm256_loadu_ps(&dist_array[92]);
-            cur_idx_vec = _mm256_set_epi32(99, 98, 97, 96, 95, 94, 93, 92);
+            __m256 cur_dist_vec = _mm256_loadu_ps(&dist_array[KNN_LIMIT - 8]);
+            cur_idx_vec = _mm256_set_epi32(KNN_LIMIT - 1, KNN_LIMIT - 2, KNN_LIMIT - 3, KNN_LIMIT - 4, KNN_LIMIT - 5,
+                                           KNN_LIMIT - 6, KNN_LIMIT - 7, KNN_LIMIT - 8);
 
             __m256 cmp_lt = _mm256_cmp_ps(cur_dist_vec, cur_worst_dist_vec, _CMP_GT_OQ);
 
@@ -413,14 +416,12 @@ public:
 
     inline vector<uint32_t> get_knn_sorted()
     {
-        assert(is_full);
-        assert(std::is_heap(knn_heap.begin(), knn_heap.end(), compare_heap_el));
-        assert(knn_heap.end() == (knn_heap.begin() + KNN_LIMIT));
+        assert(std::is_heap(knn_heap.begin(), knn_heap.begin() + fill, compare_heap_el));
 
         vector<uint32_t> knn_sorted;
-        knn_sorted.resize(KNN_LIMIT);
+        knn_sorted.resize(fill);
 
-        for (int i = 100; i > 0; --i)
+        for (uint32_t i = fill; i > 0; --i)
         {
             knn_sorted[i - 1] = knn_heap.front().node_idx;
             std::pop_heap(knn_heap.begin(), knn_heap.begin() + i, compare_heap_el);
