@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cassert>
 #include "util.h"
+#include <limits>
 
 using std::cout;
 using std::endl;
@@ -186,6 +187,7 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_u
 PERF_DBG(
         uint64_t dist_calc_t = 0;
         uint64_t knn_check_t = 0;
+        uint64_t find_worst_t = 0;
         uint64_t knn_sort_t = 0;
 )
 
@@ -197,24 +199,21 @@ private:
     const vector<d_vec_t>& _nodes;
 
     array<float, KNN_LIMIT> dist_array{};
-    array<uint32_t, KNN_LIMIT> vec_idx_array{};
+    array<uint32_t, KNN_LIMIT> node_idx_array{};
 
     uint32_t fill;
     uint32_t worst;
-
-    bool is_full;
 
 public:
     explicit Knn(const vector<d_vec_t>& nodes) : _nodes(nodes)
     {
         fill = 0;
-        is_full = false;
         worst = 0;
         query_vec = nullptr;
     }
 
 private:
-    inline void find_worst()
+    inline uint32_t find_worst()
     {
         assert(fill == KNN_LIMIT);
 
@@ -225,9 +224,10 @@ private:
         __m256i idx_add_vec = _mm256_set1_epi32(8);
         __m256i cur_worst_idx_vec = cur_idx_vec;
 
-        for (int i = 8; i < KNN_LIMIT - (KNN_LIMIT % 8); i += 8, cur_idx_vec += idx_add_vec)
+        for (int i = 8; i < KNN_LIMIT - (KNN_LIMIT % 8); i += 8)
         {
             __m256 cur_dist_vec = _mm256_loadu_ps(&dist_array[i]);
+            cur_idx_vec += idx_add_vec;
 
             __m256 cmp_lt = _mm256_cmp_ps(cur_dist_vec, cur_worst_dist_vec, _CMP_GT_OQ);
 
@@ -247,27 +247,32 @@ private:
             cur_worst_idx_vec = _mm256_blendv_epi8(cur_worst_idx_vec, cur_idx_vec, _mm256_castps_si256(cmp_lt));
         }
 
-        float worst_distances[8];
-        uint32_t worst_indices[8];
+        // Step 1: Find the maximum distance using SIMD
+        __m256 max_dist = cur_worst_dist_vec;
+        max_dist = _mm256_max_ps(max_dist, _mm256_permute2f128_ps(max_dist, max_dist, 1));
+        max_dist = _mm256_max_ps(max_dist, _mm256_permute_ps(max_dist, 0x4E));
+        max_dist = _mm256_max_ps(max_dist, _mm256_permute_ps(max_dist, 0xB1));
 
-        _mm256_storeu_ps(&worst_distances[0], cur_worst_dist_vec);
-        _mm256_storeu_si256(reinterpret_cast<__m256i_u*>(&worst_indices[0]), cur_worst_idx_vec);
+        // Step 2: Create a mask for the maximum values
+        __m256 mask = _mm256_cmp_ps(cur_worst_dist_vec, max_dist, _CMP_EQ_OQ);
 
-        float worst_dist = worst_distances[0];
-        worst = worst_indices[0];
-        for (int i = 1; i < 8; ++i)
-        {
-            if (worst_distances[i] > worst_dist)
-            {
-                worst_dist = worst_distances[i];
-                worst = worst_indices[i];
-            }
-        }
+        // Step 3: Use the mask to select the corresponding indices
+        __m256i selected_indices = _mm256_blendv_epi8(_mm256_setzero_si256(), cur_worst_idx_vec,
+                                                      _mm256_castps_si256(mask));
+
+        // Step 4: Shuffle the selected index into lower 32 bit
+        selected_indices = _mm256_max_epu32(selected_indices,
+                                            _mm256_permute2f128_si256(selected_indices, selected_indices, 1));
+        selected_indices = _mm256_max_epu32(selected_indices, _mm256_shuffle_epi32(selected_indices, 0x4E));
+        selected_indices = _mm256_max_epu32(selected_indices, _mm256_shuffle_epi32(selected_indices, 0xB1));
+
+        // Extract results
+        return _mm_cvtsi128_si32(_mm256_castsi256_si128(selected_indices));
 
 #else
 
         float cur_worst_dist = dist_array[0];
-        worst = 0;
+        uint32_t worst = 0;
 
         for (int i = 0; i < KNN_LIMIT; ++i)
         {
@@ -278,6 +283,8 @@ private:
             }
         }
 
+        return worst;
+
 #endif
     }
 
@@ -285,37 +292,61 @@ public:
     void init(q_vec_t* query_vector)
     {
         fill = 0;
-        is_full = false;
         worst = 0;
         query_vec = query_vector;
     }
 
-    inline void check(uint32_t vec_idx)
+    inline void check_add(uint32_t node_idx)
     {
-        float worst_dist = dist_array[worst];
-        float bailout_dist = is_full ? worst_dist : std::numeric_limits<float>::infinity();
+        const bool not_full = fill < KNN_LIMIT;
+        const float worst_dist = dist_array[worst];
+        const float bailout_dist = not_full ? std::numeric_limits<float>::infinity() : worst_dist;
         PERF_DBG(auto s1 = rdtsc();)
-        float dist = dist_to_query(_nodes[vec_idx], *query_vec, bailout_dist);
+        const float dist = dist_to_query(_nodes[node_idx], *query_vec, bailout_dist);
         PERF_DBG(auto s2 = rdtsc();dist_calc_t += s2 - s1;)
 
-        if (!is_full)
+        /*
+         * The amount of cycles spent in this function is astonishing.
+         * I thought this to be the result of branch miss predictions, however,
+         * the (complex) branchless code below did neither result in any performance
+         * benefits nor less branch misses overall.
+         */
+#if 0
+
+        const bool better_than_worst = dist < worst_dist;
+        const bool add_new_vec = not_full || better_than_worst;
+        const uint32_t update_idx = not_full ? fill : worst;
+        fill += not_full;
+
+        dist_array[update_idx] = add_new_vec ? dist : worst_dist;
+        node_idx_array[update_idx] = add_new_vec ? node_idx : node_idx_array[worst];
+
+        worst = better_than_worst ? worst : update_idx;
+        worst = (better_than_worst && !not_full) ? find_worst() : worst;
+
+#else
+
+        if (__builtin_expect(not_full, 0))
         {
             // insert at the back
             worst = dist < worst_dist ? worst : fill;
             dist_array[fill] = dist;
-            vec_idx_array[fill] = vec_idx;
+            node_idx_array[fill] = node_idx;
             ++fill;
-            is_full = fill == KNN_LIMIT;
         } else if (dist < worst_dist)
         {
             // replace worst with new element and find new worst
             dist_array[worst] = dist;
-            vec_idx_array[worst] = vec_idx;
-            find_worst();
+            node_idx_array[worst] = node_idx;
+//            auto sx = rdtsc();
+            worst = find_worst();
+//            find_worst_t += rdtsc() - sx;
         } else
         {
             // new element is not better than the worst element in array
         }
+
+#endif
 
         PERF_DBG(knn_check_t += rdtsc() - s2;)
     }
@@ -338,7 +369,7 @@ public:
 
         for (int i = 0; i < fill; ++i)
         {
-            sorted_knn[i] = {dist_array[i], vec_idx_array[i]};
+            sorted_knn[i] = {dist_array[i], node_idx_array[i]};
         }
 
         std::sort(sorted_knn.begin(), sorted_knn.begin() + fill,
@@ -362,7 +393,7 @@ public:
 
         for (int i = 0; i < fill; ++i)
         {
-            knn_sorted[i] = vec_idx_array[ids[i]];
+            knn_sorted[i] = node_idx_array[ids[i]];
         }
 
 #endif
@@ -417,7 +448,7 @@ public:
         query_vec = query_vector;
     }
 
-    inline void check(uint32_t vec_idx)
+    inline void check_add(uint32_t vec_idx)
     {
         float worst_dist = knn_heap.front().dist;
         float bailout_dist = is_full ? worst_dist : std::numeric_limits<float>::infinity();

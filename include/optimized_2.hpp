@@ -70,7 +70,7 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
         {  // only ANN
             for (uint32_t j = 0; j < sn; j++)
             {
-                knn.check(j);
+                knn.check_add(j);
             }
         } else if (query_type == 1)
         { // equal + ANN
@@ -78,7 +78,7 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
             {
                 if (nodes[j][0] == v)
                 {
-                    knn.check(j);
+                    knn.check_add(j);
                 }
             }
         } else if (query_type == 2)
@@ -87,7 +87,7 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
             {
                 if (nodes[j][1] >= l && nodes[j][1] <= r)
                 {
-                    knn.check(j);
+                    knn.check_add(j);
                 }
             }
         } else if (query_type == 3)
@@ -96,7 +96,7 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
             {
                 if (nodes[j][0] == v && nodes[j][1] >= l && nodes[j][1] <= r)
                 {
-                    knn.check(j);
+                    knn.check_add(j);
                 }
             }
         }
@@ -107,7 +107,7 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
             uint32_t s = 1;
             while (knn.size() < KNN_LIMIT)
             {
-                knn.check(n - s);
+                knn.check_add(n - s);
                 s = s + 1;
             }
         }
@@ -117,7 +117,8 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
 
     PERF_DBG(
             std::cerr << "dist calc:\t" << dist_calc_t << std::endl;
-            std::cerr << "knn check:\t" << knn_check_t << std::endl;
+            std::cerr << "knn check_add:\t" << knn_check_t << std::endl;
+            std::cerr << "knn find worst:\t" << find_worst_t << std::endl;
             std::cerr << "knn sort:\t" << knn_sort_t << std::endl;
     )
 }
