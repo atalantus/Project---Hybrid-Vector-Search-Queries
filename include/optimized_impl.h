@@ -121,7 +121,7 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_u
     // do the rest
     {
         auto r = VEC_DIM % 8;
-        auto cm = [r](size_t n) -> int { return n >= r ? -1 : 0;};
+        auto cm = [r](size_t n) -> int { return n <= r ? -1 : 0;};
         __m256i mask = _mm256_set_epi32(cm(1), cm(2), cm(3), cm(4), cm(5), cm(6), cm(7), 0);
         __m256 d_vec = _mm256_castsi256_ps(
                 _mm256_and_si256(_mm256_castps_si256(_mm256_loadu_ps(&data_vec[VEC_DIM - (VEC_DIM % 8)])), mask));
