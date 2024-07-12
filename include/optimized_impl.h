@@ -20,9 +20,12 @@ using std::array;
 typedef vector<float> d_vec_t;
 typedef vector<float> q_vec_t;
 
-constexpr size_t KNN_LIMIT = 100; // at least 8
+constexpr size_t KNN_LIMIT = 100;
 
-constexpr size_t VEC_DIM = 102; // at least 8
+constexpr size_t VEC_DIM = 102;
+
+static_assert(KNN_LIMIT >= 8);
+static_assert(VEC_DIM >= 10);
 
 /*
  * Fastest way to horizontally add floats of a 256-bit register.
@@ -32,11 +35,11 @@ float hsum256_ps_avx(__m256 v)
 {
     __m128 vlow = _mm256_castps256_ps128(v);
     __m128 vhigh = _mm256_extractf128_ps(v, 1); // high 128
-    vlow = _mm_add_ps(vlow, vhigh);     // add the low 128
+    vlow = vlow + vhigh;     // add the low 128
     __m128 shuf = _mm_movehdup_ps(vlow);        // broadcast elements 3,1 to 2,0
-    __m128 sums = _mm_add_ps(vlow, shuf);
+    __m128 sums = vlow + shuf;
     shuf = _mm_movehl_ps(shuf, sums); // high half -> low half
-    sums = _mm_add_ss(sums, shuf);
+    sums = sums + shuf;
     return _mm_cvtss_f32(sums);
 }
 
@@ -120,13 +123,13 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_u
 
     // do the rest
     {
-        auto r = VEC_DIM % 8;
+        auto r = (VEC_DIM - 2) % 8;
         auto cm = [r](size_t n) -> int { return n <= r ? -1 : 0;};
         __m256i mask = _mm256_set_epi32(cm(1), cm(2), cm(3), cm(4), cm(5), cm(6), cm(7), 0);
         __m256 d_vec = _mm256_castsi256_ps(
-                _mm256_and_si256(_mm256_castps_si256(_mm256_loadu_ps(&data_vec[VEC_DIM - (VEC_DIM % 8)])), mask));
+                _mm256_and_si256(_mm256_castps_si256(_mm256_loadu_ps(&data_vec[VEC_DIM - 8])), mask));
         __m256 q_vec = _mm256_castsi256_ps(
-                _mm256_and_si256(_mm256_castps_si256(_mm256_loadu_ps(&query_vec[VEC_DIM - (VEC_DIM % 8)])), mask));
+                _mm256_and_si256(_mm256_castps_si256(_mm256_loadu_ps(&query_vec[VEC_DIM - 8])), mask));
 
         __m256 diff_vec = d_vec - q_vec;
         diff_vec *= diff_vec;
