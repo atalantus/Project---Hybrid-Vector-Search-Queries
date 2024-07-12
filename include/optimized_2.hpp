@@ -9,7 +9,7 @@
 #include <immintrin.h>
 #include <cstdint>
 
-#define USE_HEAP_KNN 0
+#define USE_HEAP_KNN 1
 
 #define FIND_WORST_SIMD 1
 

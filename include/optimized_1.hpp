@@ -11,7 +11,7 @@
 
 #define USE_HEAP_KNN 0
 
-#define FIND_WORST_SIMD 1
+#define FIND_WORST_SIMD 0
 
 /*
  * Due to the order of operations changing when doing SIMD floating point math
@@ -21,7 +21,7 @@
  * However, these changes can be big enough to yield a different result dataset
  * than the baseline implementation.
  */
-#define DIST_SIMD 1
+#define DIST_SIMD 0
 
 /*
  * With SIMD the distance calculation becomes so fast (for "only" 100 dimensions at least)

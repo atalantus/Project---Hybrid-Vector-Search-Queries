@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <immintrin.h>
 
 uint64_t rdtsc(){
     return __rdtsc();

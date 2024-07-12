@@ -1,30 +1,28 @@
+#include <algorithm>
+#include <fstream>
+#include <iostream>
+#include <numeric>
+#include <queue>
+
 /*
  *  Example code using sampling to find KNN.
  */
 
 #define BENCH 1
 
-#include <algorithm>
-#include <fstream>
-#include <iostream>
-#include <numeric>
-#include <queue>
+#include "optimized_impl.h"
 #include "util.h"
-
-using std::cout;
-using std::endl;
-using std::string;
-using std::vector;
 
 float compare_with_id(const std::vector<float>& a, const std::vector<float>& b)
 {
     float sum = 0.0;
     // Skip the first 2 dimensions
-    for (size_t i = 2; i < a.size(); ++i)
+    for (size_t i = 2; i < VEC_DIM; ++i)
     {
         float diff = a[i] - b[i];
         sum += diff * diff;
     }
+
     return sum;
 }
 
@@ -41,7 +39,6 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
     cout << "# queries:      " << nq << "\n";
 
     /** A basic method to compute the KNN results using sampling  **/
-    const int K = 100;    // To find 100-NN
 
 #if BENCH
 
@@ -68,7 +65,7 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
         vector<uint32_t> knn; // candidate knn
 
 #if BENCH
-        auto s1 = rdtsc();
+        auto s1 = std::chrono::high_resolution_clock::now();
 #endif
 
         // Handling 4 types of queries
@@ -104,10 +101,10 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
         }
 
         // If the number of knn in the sampled data is less than K, then fill the rest with the last few nodes
-        if (knn.size() < K)
+        if (knn.size() < KNN_LIMIT)
         {
             uint32_t s = 1;
-            while (knn.size() < K)
+            while (knn.size() < KNN_LIMIT)
             {
                 knn.push_back(n - s);
                 s = s + 1;
@@ -115,8 +112,9 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
         }
 
 #if BENCH
-        auto s2 = rdtsc();
-        index_t += s2 - s1;
+        auto s2 = std::chrono::high_resolution_clock::now();
+        index_t += std::chrono::duration_cast<std::chrono::nanoseconds>(s2 - s1).count();
+        s2 = std::chrono::high_resolution_clock::now();
 #endif
 
         // build another vec to store the distance between knn[i] and query_vec
@@ -126,8 +124,9 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
             dists[j] = compare_with_id(nodes[knn[j]], query_vec);
 
 #if BENCH
-        auto s3 = rdtsc();
-        dist_t += s3 - s2;
+        auto s3 = std::chrono::high_resolution_clock::now();
+        dist_t += std::chrono::duration_cast<std::chrono::nanoseconds>(s3 - s2).count();
+        s3 = std::chrono::high_resolution_clock::now();
 #endif
 
         vector<uint32_t> ids;
@@ -139,15 +138,16 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
             return dists[a] < dists[b];
         });
         vector<uint32_t> knn_sorted;
-        knn_sorted.resize(K);
-        for (uint32_t j = 0; j < K; j++)
+        knn_sorted.resize(KNN_LIMIT);
+        for (uint32_t j = 0; j < KNN_LIMIT; j++)
         {
             knn_sorted[j] = knn[ids[j]];
         }
 
 #if BENCH
-        auto s4 = rdtsc();
-        sort_t += s4 - s3;
+        auto s4 = std::chrono::high_resolution_clock::now();
+        sort_t += std::chrono::duration_cast<std::chrono::nanoseconds>(s4 - s3).count();
+        s4 = std::chrono::high_resolution_clock::now();
 #endif
 
         knn_results.push_back(knn_sorted);

@@ -31,14 +31,20 @@ void compare(const std::string& a_path, const std::string& b_path)
             return;
         }
 
+        int errs = 0;
+
         for (int l = 0; l < a_dist_data[k].size(); ++l)
         {
             auto diff = std::abs((double) a_dist_data[k][l] - (double) b_dist_data[k][l]);
             if (diff >= 0.0001)
             {
                 success = false;
+                errs++;
                 std::cerr << k << " - " << l << ": distance difference of " << diff << " between "
                           << std::setprecision(15) << a_dist_data[k][l] << " and " << b_dist_data[k][l] << std::endl;
+                if (errs >= 50) {
+                    return;
+                }
             }
         }
     }
