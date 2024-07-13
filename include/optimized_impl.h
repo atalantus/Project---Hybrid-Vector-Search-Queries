@@ -189,9 +189,10 @@ PERF_DBG(
         uint64_t knn_check_t = 0;
         uint64_t find_worst_t = 0;
         uint64_t knn_sort_t = 0;
+        uint64_t knn_merge_t = 0;
 )
 
-class Knn
+class alignas(64) Knn
 {
 private:
     q_vec_t* query_vec;
@@ -224,7 +225,7 @@ private:
         __m256i idx_add_vec = _mm256_set1_epi32(8);
         __m256i cur_worst_idx_vec = cur_idx_vec;
 
-        for (int i = 8; i < KNN_LIMIT - (KNN_LIMIT % 8); i += 8)
+        for (size_t i = 8; i < KNN_LIMIT - (KNN_LIMIT % 8); i += 8)
         {
             __m256 cur_dist_vec = _mm256_loadu_ps(&dist_array[i]);
             cur_idx_vec += idx_add_vec;
@@ -351,6 +352,62 @@ public:
         PERF_DBG(knn_check_t += rdtsc() - s2;)
     }
 
+    inline void merge(Knn& other)
+    {
+#ifdef SORTED_MERGE
+
+#else
+
+        for (uint32_t i = 0; i < other.fill; ++i)
+        {
+            const bool not_full = fill < KNN_LIMIT;
+            const float worst_dist = dist_array[worst];
+            const float other_dist = other.dist_array[i];
+            PERF_DBG(auto s2 = rdtsc();)
+
+#if 0
+
+            const bool better_than_worst = other_dist < worst_dist;
+            const bool add_new_vec = not_full || better_than_worst;
+            const uint32_t update_idx = not_full ? fill : worst;
+            fill += not_full;
+
+            dist_array[update_idx] = add_new_vec ? other_dist : worst_dist;
+            node_idx_array[update_idx] = add_new_vec ? other.node_idx_array[i] : node_idx_array[worst];
+
+            worst = better_than_worst ? worst : update_idx;
+            worst = (better_than_worst && !not_full) ? find_worst() : worst;
+
+#else
+
+            if (__builtin_expect(not_full, 0))
+            {
+                // insert at the back
+                worst = other_dist < worst_dist ? worst : fill;
+                dist_array[fill] = other_dist;
+                node_idx_array[fill] = other.node_idx_array[i];
+                ++fill;
+            } else if (other_dist < worst_dist)
+            {
+                // replace worst with new element and find new worst
+                dist_array[worst] = other_dist;
+                node_idx_array[worst] = other.node_idx_array[i];
+//            auto sx = rdtsc();
+                worst = find_worst();
+//            find_worst_t += rdtsc() - sx;
+            } else
+            {
+                // new element is not better than the worst element in array
+            }
+
+#endif
+
+            PERF_DBG(knn_merge_t += rdtsc() - s2;)
+        }
+
+#endif
+    }
+
     [[nodiscard]] inline uint32_t size() const
     {
         return fill;
@@ -367,7 +424,7 @@ public:
 
         std::array<std::pair<float, uint32_t>, KNN_LIMIT> sorted_knn;
 
-        for (int i = 0; i < fill; ++i)
+        for (uint32_t i = 0; i < fill; ++i)
         {
             sorted_knn[i] = {dist_array[i], node_idx_array[i]};
         }
@@ -376,7 +433,7 @@ public:
                   [](const auto& a, const auto& b)
                   { return a.first < b.first; });
 
-        for (int i = 0; i < fill; ++i)
+        for (uint32_t i = 0; i < fill; ++i)
         {
             knn_sorted[i] = sorted_knn[i].second;
         }
@@ -404,7 +461,7 @@ public:
     }
 };
 
-class KnnHeap
+class alignas(64) KnnHeap
 {
 private:
     bool is_full;

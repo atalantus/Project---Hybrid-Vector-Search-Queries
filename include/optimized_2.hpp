@@ -8,13 +8,16 @@
 #include <array>
 #include <immintrin.h>
 #include <cstdint>
+#include <thread>
+#include <cmath>
 
 #define ENABLE_PERF_DBG 1
 
+#define CUSTOM_PARAL 1
+#define PARAL 0
+
 #define USE_HEAP_KNN 0
-
 #define FIND_WORST_SIMD 1
-
 #define SINGLE_SORTED 1
 
 /*
@@ -26,7 +29,6 @@
  * than the baseline implementation.
  */
 #define DIST_SIMD 1
-
 /*
  * With SIMD the distance calculation becomes so fast (for "only" 100 dimensions at least)
  * that any form of early bailout check does not seem to yield any performance benefit.
@@ -35,6 +37,224 @@
 
 #include "optimized_impl.h"
 #include "util.h"
+#include "threading.hpp"
+
+#if CUSTOM_PARAL
+
+void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, float sample_proportion,
+               vector<vector<uint32_t>>& knn_results)
+{
+    const uint32_t n = nodes.size();
+    const uint32_t d = nodes[0].size();
+    const uint32_t nq = queries.size();
+    const uint32_t sn = uint32_t(sample_proportion * n);
+
+    cout << "# data points:  " << n << "\n";
+    cout << "# data point dim:  " << d << "\n";
+    cout << "# queries:      " << nq << "\n";
+
+    const uint32_t MIN_THREAD_WORKLOAD = 5000;
+
+    const uint32_t thread_n = std::max(1U, std::min(std::thread::hardware_concurrency(), sn / MIN_THREAD_WORKLOAD));
+
+    PERF_DBG(std::cout << "Using " << thread_n << " threads\n";)
+
+#if USE_HEAP_KNN
+    KnnHeap knn(nodes);
+#else
+    vector<Knn> knns;
+    knns.reserve(thread_n);
+    for (size_t i = 0; i < thread_n; ++i)
+    {
+        knns.emplace_back(nodes);
+    }
+
+    ThreadScheduler<Knn> threadScheduler(thread_n, knns);
+#endif
+
+    for (uint i = 0; i < nq; i++)
+    {
+        const uint32_t query_type = queries[i][0];
+        const int32_t v = queries[i][1];
+        const float l = queries[i][2];
+        const float r = queries[i][3];
+        // skip first 2 elements to align with data vectorss
+        q_vec_t query_vec(queries[i].begin() + 2, queries[i].end());
+
+        threadScheduler.parallelFor({0, sn}, [&](const auto& range, Knn& knn)
+        {
+            knn.init(&query_vec);
+
+            // Handling 4 types of queries
+            if (query_type == 0)
+            {  // only ANN
+                for (uint32_t j = range.start; j < range.end; j++)
+                {
+                    knn.check_add(j);
+                }
+            } else if (query_type == 1)
+            { // equal + ANN
+                for (uint32_t j = range.start; j < range.end; j++)
+                {
+                    if (nodes[j][0] == v)
+                    {
+                        knn.check_add(j);
+                    }
+                }
+            } else if (query_type == 2)
+            { // range + ANN
+                for (uint32_t j = range.start; j < range.end; j++)
+                {
+                    if (nodes[j][1] >= l && nodes[j][1] <= r)
+                    {
+                        knn.check_add(j);
+                    }
+                }
+            } else if (query_type == 3)
+            { // equal + range + ANN
+                for (uint32_t j = range.start; j < range.end; j++)
+                {
+                    if (nodes[j][0] == v && nodes[j][1] >= l && nodes[j][1] <= r)
+                    {
+                        knn.check_add(j);
+                    }
+                }
+            }
+        });
+
+        // merge knns
+        auto final_knn = knns[0];
+        for (uint32_t j = 1; j < thread_n; ++j)
+        {
+            final_knn.merge(knns[j]);
+        }
+
+        // If the number of knn in the sampled data is less than K, then fill the rest with the last few nodes
+        if (final_knn.size() < KNN_LIMIT)
+        {
+            uint32_t s = 1;
+            while (final_knn.size() < KNN_LIMIT)
+            {
+                final_knn.check_add(n - s);
+                s = s + 1;
+            }
+        }
+
+        knn_results.push_back(final_knn.get_knn_sorted());
+    }
+
+    PERF_DBG(
+            std::cerr << "dist calc:\t" << dist_calc_t << std::endl;
+            std::cerr << "knn check_add:\t" << knn_check_t << std::endl;
+            std::cerr << "knn find worst:\t" << find_worst_t << std::endl;
+            std::cerr << "knn merge:\t" << knn_merge_t << std::endl;
+            std::cerr << "knn sort:\t" << knn_sort_t << std::endl;
+    )
+}
+
+#elif PARAL
+
+/*
+void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, float sample_proportion,
+               vector<vector<uint32_t>>& knn_results)
+{
+    const uint32_t n = nodes.size();
+    const uint32_t d = nodes[0].size();
+    const uint32_t nq = queries.size();
+    const uint32_t sn = uint32_t(sample_proportion * n);
+
+    cout << "# data points:  " << n << "\n";
+    cout << "# data point dim:  " << d << "\n";
+    cout << "# queries:      " << nq << "\n";
+
+    const uint32_t MIN_THREAD_WORKLOAD = 5000;
+
+    const uint32_t thread_n = std::max(1U, std::min(std::thread::hardware_concurrency(), sn / MIN_THREAD_WORKLOAD));
+
+    PERF_DBG(std::cout << "Using " << thread_n << " threads\n";)
+
+#if USE_HEAP_KNN
+    KnnHeap knn(nodes);
+#else
+    vector<Knn> knns;
+    knns.reserve(thread_n);
+    for (size_t i = 0; i < thread_n; ++i)
+    {
+        knns.emplace_back(nodes);
+    }
+#endif
+
+    for (uint i = 0; i < nq; i++)
+    {
+        const uint32_t query_type = queries[i][0];
+        const int32_t v = queries[i][1];
+        const float l = queries[i][2];
+        const float r = queries[i][3];
+        // skip first 2 elements to align with data vectors
+        q_vec_t query_vec(queries[i].begin() + 2, queries[i].end());
+
+        std::for_each(std::execution::par, 0U, sn,
+                      [&](uint32_t j)
+                      {
+                          knn.init(&query_vec);
+
+                          // Handling 4 types of queries
+                          if (query_type == 0)
+                          {  // only ANN
+                              knn.check_add(j);
+                          } else if (query_type == 1)
+                          { // equal + ANN
+                              if (nodes[j][0] == v)
+                              {
+                                  knn.check_add(j);
+                              }
+                          } else if (query_type == 2)
+                          { // range + ANN
+                              if (nodes[j][1] >= l && nodes[j][1] <= r)
+                              {
+                                  knn.check_add(j);
+                              }
+                          } else if (query_type == 3)
+                          { // equal + range + ANN
+                              if (nodes[j][0] == v && nodes[j][1] >= l && nodes[j][1] <= r)
+                              {
+                                  knn.check_add(j);
+                              }
+                          }
+                      });
+
+        // merge knns
+        auto final_knn = knns[0];
+        for (uint32_t j = 1; j < thread_n; ++j)
+        {
+            final_knn.merge(knns[j]);
+        }
+
+        // If the number of knn in the sampled data is less than K, then fill the rest with the last few nodes
+        if (final_knn.size() < KNN_LIMIT)
+        {
+            uint32_t s = 1;
+            while (final_knn.size() < KNN_LIMIT)
+            {
+                final_knn.check_add(n - s);
+                s = s + 1;
+            }
+        }
+
+        knn_results.push_back(final_knn.get_knn_sorted());
+    }
+
+    PERF_DBG(
+            std::cerr << "dist calc:\t" << dist_calc_t << std::endl;
+            std::cerr << "knn check_add:\t" << knn_check_t << std::endl;
+            std::cerr << "knn find worst:\t" << find_worst_t << std::endl;
+            std::cerr << "knn merge:\t" << knn_merge_t << std::endl;
+            std::cerr << "knn sort:\t" << knn_sort_t << std::endl;
+    )
+}
+*/
+
+#else
 
 void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, float sample_proportion,
                vector<vector<uint32_t>>& knn_results)
@@ -122,3 +342,5 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
             std::cerr << "knn sort:\t" << knn_sort_t << std::endl;
     )
 }
+
+#endif
