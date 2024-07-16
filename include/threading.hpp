@@ -2,30 +2,33 @@
 #include <vector>
 #include <mutex>
 #include <condition_variable>
-
-#include "optimized_impl.h"
-#include "util.h"
+#include <atomic>
+#include <functional>
+#include <cassert>
 
 template<class T>
 class ThreadPool
 {
-    enum ThreadState : uint8_t
+    enum class ThreadState
     {
         IDLE, TASK, DONE
     };
 
     uint32_t thread_n;
     std::vector<std::thread> threads;
-    std::atomic<ThreadState> state;
-    std::mutex scheduler_mutex;
-    std::atomic<uint8_t> num_finished_workers;
-    std::condition_variable task_cv;
+    ThreadState state;
+    std::mutex state_mutex;
+    std::condition_variable state_cv;
+    uint32_t num_finished_workers;
+    std::mutex finished_mutex;
+    std::condition_variable finished_cv;
     uint32_t work_range_size = 0;
-    std::function<void(uint32_t start, uint32_t end, Knn& knn)> task_fn;
+    std::function<void(uint32_t start, uint32_t end, T& knn)> task_fn;
     std::vector<T>& knns;
 
 public:
-    explicit ThreadPool(uint32_t thread_n, std::vector<T>& knns) : thread_n{thread_n}, knns{knns}
+    explicit ThreadPool(uint32_t thread_n, std::vector<T>& knns) : thread_n{thread_n}, knns{knns},
+                                                                   state{ThreadState::IDLE}, num_finished_workers{0}
     {
         assert(knns.size() == thread_n);
 
@@ -41,15 +44,18 @@ public:
 
     ~ThreadPool()
     {
-        state.store(DONE);
-        state.notify_all();
+        {
+            std::lock_guard<std::mutex> lock(state_mutex);
+            state = ThreadState::DONE;
+        }
+        state_cv.notify_all();
         for (auto& t: threads)
         {
             t.join();
         }
     }
 
-    void parallel_for(uint32_t size, std::function<void(uint32_t, uint32_t, Knn&)> task)
+    void parallel_for(uint32_t size, std::function<void(uint32_t, uint32_t, T&)> task)
     {
         if (thread_n <= 1)
         {
@@ -57,34 +63,31 @@ public:
             return;
         }
 
-        scheduler_mutex.lock();
-
-        // prepare task for workers
-        num_finished_workers = 0;
-        work_range_size = size;
-        task_fn = task;
-
-        // wake up workers
-        state.store(TASK);
-        state.notify_all();
-
-        // wait for workers to finish
-        while (auto nfw = num_finished_workers < thread_n)
         {
-            num_finished_workers.wait(nfw);
+            std::lock_guard<std::mutex> lock(state_mutex);
+            work_range_size = size;
+            task_fn = std::move(task);
+            state = ThreadState::TASK;
+        }
+        state_cv.notify_all();
+
+        {
+            std::unique_lock<std::mutex> lock(finished_mutex);
+            finished_cv.wait(lock, [this]
+            { return num_finished_workers == thread_n; });
         }
 
-        // reset task
-        state.store(IDLE);
-        state.notify_all();
-
-        // wait for workers to reset
-        while (auto nfw = num_finished_workers > 0)
         {
-            num_finished_workers.wait(nfw);
+            std::lock_guard<std::mutex> lock(state_mutex);
+            state = ThreadState::IDLE;
         }
+        state_cv.notify_all();
 
-        scheduler_mutex.unlock();
+        {
+            std::unique_lock<std::mutex> lock(finished_mutex);
+            finished_cv.wait(lock, [this]
+            { return num_finished_workers == 0; });
+        }
     }
 
 private:
@@ -92,38 +95,40 @@ private:
     {
         while (true)
         {
-            state.wait(IDLE);
-
-            switch (state.load())
             {
-                case IDLE:
-                    break;
-                case DONE:
+                std::unique_lock<std::mutex> lock(state_mutex);
+                state_cv.wait(lock, [this]
+                { return state != ThreadState::IDLE; });
+
+                if (state == ThreadState::DONE)
+                {
                     return;
-                case TASK:
+                }
+
+                if (state == ThreadState::TASK)
                 {
                     uint32_t worker_size = work_range_size / thread_n;
                     uint32_t worker_start = tid * worker_size;
-                    uint32_t worker_end = tid == thread_n - 1 ? work_range_size : worker_start + worker_size;
+                    uint32_t worker_end = (tid == thread_n - 1) ? work_range_size : (worker_start + worker_size);
 
-                    // execute task
+                    lock.unlock();
                     task_fn(worker_start, worker_end, knns[tid]);
+                    lock.lock();
 
-                    // notify finish
-                    num_finished_workers++;
-                    num_finished_workers.notify_one();
-
-                    // wait for task to finish
-                    while (state == TASK)
                     {
-                        state.wait(TASK);
+                        std::lock_guard<std::mutex> finished_lock(finished_mutex);
+                        ++num_finished_workers;
                     }
+                    finished_cv.notify_one();
 
-                    // notify reset
-                    num_finished_workers--;
-                    num_finished_workers.notify_one();
+                    state_cv.wait(lock, [this]
+                    { return state == ThreadState::IDLE; });
 
-                    break;
+                    {
+                        std::lock_guard<std::mutex> finished_lock(finished_mutex);
+                        --num_finished_workers;
+                    }
+                    finished_cv.notify_one();
                 }
             }
         }
