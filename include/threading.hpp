@@ -6,20 +6,8 @@
 #include "optimized_impl.h"
 #include "util.h"
 
-struct VectorQueryRange
-{
-    uint32_t start;
-    uint32_t end;
-
-    VectorQueryRange() : start{0}, end{0}
-    {}
-
-    VectorQueryRange(uint32_t start, uint32_t end) : start{start}, end{end}
-    {}
-};
-
 template<class T>
-class ThreadScheduler
+class ThreadPool
 {
     enum ThreadState : uint8_t
     {
@@ -32,13 +20,12 @@ class ThreadScheduler
     std::mutex scheduler_mutex;
     std::atomic<uint8_t> num_finished_workers;
     std::condition_variable task_cv;
-    VectorQueryRange task_range;
-    uint64_t worker_size = 0;
-    std::function<void(VectorQueryRange, Knn& knn)> task_fn;
+    uint32_t work_range_size = 0;
+    std::function<void(uint32_t start, uint32_t end, Knn& knn)> task_fn;
     std::vector<T>& knns;
 
 public:
-    explicit ThreadScheduler(uint32_t thread_n, std::vector<T>& knns) : thread_n{thread_n}, knns{knns}
+    explicit ThreadPool(uint32_t thread_n, std::vector<T>& knns) : thread_n{thread_n}, knns{knns}
     {
         assert(knns.size() == thread_n);
 
@@ -47,12 +34,12 @@ public:
             threads.reserve(thread_n);
             for (uint32_t i = 0; i < thread_n; ++i)
             {
-                threads.emplace_back(&ThreadScheduler::worker, this, i);
+                threads.emplace_back(&ThreadPool::worker, this, i);
             }
         }
     }
 
-    ~ThreadScheduler()
+    ~ThreadPool()
     {
         state.store(DONE);
         state.notify_all();
@@ -62,11 +49,11 @@ public:
         }
     }
 
-    template<typename F>
-    void parallelFor(VectorQueryRange range, F task)
+    void parallel_for(uint32_t size, std::function<void(uint32_t, uint32_t, Knn&)> task)
     {
-        if (thread_n <= 1) {
-            task(range, knns[0]);
+        if (thread_n <= 1)
+        {
+            task(0, size, knns[0]);
             return;
         }
 
@@ -74,9 +61,8 @@ public:
 
         // prepare task for workers
         num_finished_workers = 0;
-        task_range = range;
+        work_range_size = size;
         task_fn = task;
-        worker_size = (range.end - range.start) / thread_n;
 
         // wake up workers
         state.store(TASK);
@@ -116,14 +102,12 @@ private:
                     return;
                 case TASK:
                 {
-                    uint64_t worker_begin = task_range.start + (tid * worker_size);
-                    VectorQueryRange worker_range(worker_begin,
-                                                  tid == thread_n - 1
-                                                  ? task_range.end
-                                                  : worker_begin + worker_size);
+                    uint32_t worker_size = work_range_size / thread_n;
+                    uint32_t worker_start = tid * worker_size;
+                    uint32_t worker_end = tid == thread_n - 1 ? work_range_size : worker_start + worker_size;
 
                     // execute task
-                    task_fn(worker_range, knns[tid]);
+                    task_fn(worker_start, worker_end, knns[tid]);
 
                     // notify finish
                     num_finished_workers++;
