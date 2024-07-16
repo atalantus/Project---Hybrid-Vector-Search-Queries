@@ -6,22 +6,28 @@
 #include <functional>
 #include <cassert>
 
+#include "optimized_impl.h"
+#include "util.h"
+
 template<class T>
 class ThreadPool
 {
-    enum class ThreadState
+    enum class ThreadState : uint8_t
     {
         IDLE, TASK, DONE
     };
 
     uint32_t thread_n;
     std::vector<std::thread> threads;
+
     ThreadState state;
     std::mutex state_mutex;
     std::condition_variable state_cv;
+
     uint32_t num_finished_workers;
     std::mutex finished_mutex;
     std::condition_variable finished_cv;
+
     uint32_t work_range_size = 0;
     std::function<void(uint32_t start, uint32_t end, T& knn)> task_fn;
     std::vector<T>& knns;
