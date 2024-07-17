@@ -1,16 +1,13 @@
 #include "io.h"
 #include "perfevent.hpp"
 
+#define DATASET 0
+
 #if IMPL == 2
-
-#include "optimized_1.hpp"
-
+#include "optimized.hpp"
 #elif IMPL == 3
-
-#include "optimized_2.hpp"
-
+#include "optimized_parallel.hpp"
 #else
-
 #include "baseline.hpp"
 
 #endif
@@ -22,36 +19,32 @@ using std::vector;
 
 int main(int argc, char** argv)
 {
-#if IMPL == 2
-
-    std::cout << "Running Optimized_1 Vector Search\n";
-
-#elif IMPL == 3
-
-    std::cout << "Running Optimized_2 Vector Search\n";
-
+#if DATASET == 1
+    const std::string dataset = "medium";
+#elif DATASET == 2
+    const std::string dataset = "large";
 #else
+    const std::string dataset = "default";
+#endif
 
+#if IMPL == 2
+    std::cout << "Running Optimized Vector Search\n";
+#elif IMPL == 3
+    std::cout << "Running Parallel Optimized Vector Search\n";
+#else
     std::cout << "Running Baseline Vector Search\n";
-
 #endif
 
 
-    string source_path = "../data/dummy-data.bin";
-    string query_path = "../data/dummy-queries.bin";
+    string source_path = "../data/" + dataset + "-data.bin";
+    string query_path = "../data/query.bin";
 
 #if IMPL == 2
-
-    string knn_save_path = "../result_data/dummy_optimized_1.bin";
-
+    string knn_save_path = "../result_data/optimized.bin";
 #elif IMPL == 3
-
-    string knn_save_path = "../result_data/dummy_optimized_2.bin";
-
+    string knn_save_path = "../result_data/optimized_parallel.bin";
 #else
-
-    string knn_save_path = "../result_data/dummy_baseline.bin";
-
+    string knn_save_path = "../result_data/baseline.bin";
 #endif
 
     // Also accept other path for source data

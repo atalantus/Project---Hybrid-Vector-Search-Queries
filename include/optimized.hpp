@@ -9,12 +9,26 @@
 #include <immintrin.h>
 #include <cstdint>
 
-#define ENABLE_PERF_DBG 1
+/*
+ * Enables performance debugging.
+ */
+#define ENABLE_PERF_DBG 0
 
+/*
+ * Use Heap Knn instead of unsorted Knn
+ */
 #define USE_HEAP_KNN 0
 
+/*
+ * Enables SIMD optimization for the find_worst operation.
+ * Does not have any effect on Heap Knn.
+ */
 #define FIND_WORST_SIMD 1
 
+/*
+ * Enables faster get_knn_sorted implementation.
+ * Does not have any effect on Heap Knn.
+ */
 #define SINGLE_SORTED 1
 
 /*
@@ -23,13 +37,14 @@
  * calculated without SIMD (smaller differences in the 5th decimal point).
  *
  * However, these changes can be big enough to yield a different result dataset
- * than the baseline implementation.
+ * than the baseline implementation. See fp_inaccuracy_test.cpp
  */
 #define DIST_SIMD 1
 
 /*
- * With SIMD the distance calculation becomes so fast (for "only" 100 dimensions at least)
- * that any form of early bailout check does not seem to yield any performance benefit.
+ * With SIMD the distance calculation becomes so fast that any form of early bailout
+ * check does not seem to yield any performance benefit given the performance hit
+ * of the horizontal "hsum256_ps_avx" addition.
  */
 #define DIST_BAIL_OUT 0
 
@@ -116,9 +131,11 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
     }
 
     PERF_DBG(
-            std::cerr << "dist calc:\t" << dist_calc_t << std::endl;
-            std::cerr << "knn check_add:\t" << knn_check_t << std::endl;
-            std::cerr << "knn find worst:\t" << find_worst_t << std::endl;
-            std::cerr << "knn sort:\t" << knn_sort_t << std::endl;
+            std::cerr << "total dist calcs:\t" << dist_calcs << std::endl;
+            std::cerr << "total bailouts:\t\t" << bailout << std::endl;
+            std::cerr << "dist calc cycles:\t" << dist_calc_t << std::endl;
+            std::cerr << "knn check_add cycles:\t" << knn_check_t << std::endl;
+            std::cerr << "knn find worst cycles:\t" << find_worst_t << std::endl;
+            std::cerr << "knn sort cycles:\t" << knn_sort_t << std::endl;
     )
 }

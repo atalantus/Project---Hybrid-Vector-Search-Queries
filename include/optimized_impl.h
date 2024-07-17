@@ -12,6 +12,7 @@
 #include <cassert>
 #include "util.h"
 #include <limits>
+#include <atomic>
 
 using std::cout;
 using std::endl;
@@ -45,25 +46,15 @@ float hsum256_ps_avx(__m256 v)
     return _mm_cvtss_f32(sums);
 }
 
-template<typename It, typename T, typename Compare = std::less<>>
-auto lower_bound_branchless(It low, It last, const T& val, Compare lt = {})
-{
-    auto n = std::distance(low, last);
-
-    while (auto half = n / 2)
-    {
-        auto middle = low;
-        std::advance(middle, half);
-        low = lt(*middle, val) ? middle : low;
-        n -= half;
-    }
-    if (lt(*low, val))
-        ++low;
-    return low;
-}
+PERF_DBG(
+        std::atomic<uint64_t> dist_calcs = 0;
+        std::atomic<uint64_t> bailout = 0;
+)
 
 float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_unused]] float worst)
 {
+    PERF_DBG(++dist_calcs;)
+
 #if DIST_SIMD
 
     __m256 sum_vec = _mm256_set1_ps(0.0);
@@ -72,7 +63,7 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_u
 
     // Skip the first 2 dimensions
     size_t i = 2;
-    for (; i < (VEC_DIM / 16 * 8) + 2; i += 8)
+    for (; i < (VEC_DIM / 4 * 3) + 2; i += 8)
     {
         __m256 d_vec = _mm256_loadu_ps(&data_vec[i]);
         __m256 q_vec = _mm256_loadu_ps(&query_vec[i]);
@@ -82,21 +73,13 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_u
         sum_vec += diff_vec;
     }
 
-    // bailout via horizontal sum
+    // check for bailout
     auto cur_sum = hsum256_ps_avx(sum_vec);
     if (cur_sum >= worst)
     {
+        PERF_DBG(bailout++;)
         return std::numeric_limits<float>::infinity();
     }
-
-    // bailout via sum vector comparison
-//    __m256 bailout_vec = _mm256_set1_ps(worst);
-//    __m256i bailout_cmp_vec = _mm256_castps_si256(_mm256_cmp_ps(sum_vec, bailout_vec, _CMP_GE_OQ));
-//    if (_mm256_testz_si256(bailout_cmp_vec, bailout_cmp_vec) == 0)
-//    {
-//        bailouts++;
-//        return std::numeric_limits<float>::infinity();
-//    }
 
     for (; i < VEC_DIM - (VEC_DIM % 8) + 2; i += 8)
     {
@@ -148,7 +131,8 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_u
 
     // Skip the first 2 dimensions
     size_t i = 2;
-    for (; i < VEC_DIM / 2; ++i)
+    // bailout at around 75% percent of the sum
+    for (; i < VEC_DIM / 4 * 3; ++i)
     {
         float diff = data_vec[i] - query_vec[i];
         sum += diff * diff;
@@ -157,6 +141,7 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_u
     // check for early bailout
     if (sum >= worst)
     {
+        PERF_DBG(bailout++;)
         return std::numeric_limits<float>::infinity();
     }
 
@@ -185,11 +170,11 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_u
 }
 
 PERF_DBG(
-        uint64_t dist_calc_t = 0;
-        uint64_t knn_check_t = 0;
-        uint64_t find_worst_t = 0;
-        uint64_t knn_sort_t = 0;
-        uint64_t knn_merge_t = 0;
+        std::atomic<uint64_t> dist_calc_t = 0;
+        std::atomic<uint64_t> knn_check_t = 0;
+        std::atomic<uint64_t> find_worst_t = 0;
+        std::atomic<uint64_t> knn_sort_t = 0;
+        std::atomic<uint64_t> knn_merge_t = 0;
 )
 
 class alignas(64) Knn
@@ -310,9 +295,9 @@ public:
          * The amount of cycles spent in this function is astonishing.
          * I thought this to be the result of branch miss predictions, however,
          * the (complex) branchless code below did neither result in any performance
-         * benefits nor less branch misses overall.
+         * benefits nor (noticeably) less branch misses overall.
          */
-#if 0
+#if 1
 
         const bool better_than_worst = dist < worst_dist;
         const bool add_new_vec = not_full || better_than_worst;
@@ -339,9 +324,7 @@ public:
             // replace worst with new element and find new worst
             dist_array[worst] = dist;
             node_idx_array[worst] = node_idx;
-//            auto sx = rdtsc();
             worst = find_worst();
-//            find_worst_t += rdtsc() - sx;
         } else
         {
             // new element is not better than the worst element in array
@@ -354,10 +337,6 @@ public:
 
     inline void merge(Knn& other)
     {
-#ifdef SORTED_MERGE
-
-#else
-
         for (uint32_t i = 0; i < other.fill; ++i)
         {
             const bool not_full = fill < KNN_LIMIT;
@@ -365,7 +344,7 @@ public:
             const float other_dist = other.dist_array[i];
             PERF_DBG(auto s2 = rdtsc();)
 
-#if 0
+#if 1
 
             const bool better_than_worst = other_dist < worst_dist;
             const bool add_new_vec = not_full || better_than_worst;
@@ -392,9 +371,7 @@ public:
                 // replace worst with new element and find new worst
                 dist_array[worst] = other_dist;
                 node_idx_array[worst] = other.node_idx_array[i];
-//            auto sx = rdtsc();
                 worst = find_worst();
-//            find_worst_t += rdtsc() - sx;
             } else
             {
                 // new element is not better than the worst element in array
@@ -404,8 +381,6 @@ public:
 
             PERF_DBG(knn_merge_t += rdtsc() - s2;)
         }
-
-#endif
     }
 
     [[nodiscard]] inline uint32_t size() const
@@ -513,7 +488,7 @@ public:
         float dist = dist_to_query(_nodes[vec_idx], *query_vec, bailout_dist);
         PERF_DBG(auto s2 = rdtsc();dist_calc_t += s2 - s;)
 
-        if (!is_full)
+        if (__builtin_expect(!is_full, 0))
         {
             // insert at the back
             knn_heap[fill++] = {dist, vec_idx};

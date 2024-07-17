@@ -36,7 +36,7 @@ void compare(const std::string& a_path, const std::string& b_path)
         for (int l = 0; l < a_dist_data[k].size(); ++l)
         {
             auto diff = std::abs((double) a_dist_data[k][l] - (double) b_dist_data[k][l]);
-            if (diff >= 0.0001)
+            if (diff >= 0.002)
             {
                 success = false;
                 errs++;

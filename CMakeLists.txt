@@ -21,12 +21,12 @@ target_include_directories(baseline.out PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
 target_compile_definitions(baseline.out PRIVATE IMPL=1)
 
-add_executable(optimized_1.out src/test.cpp)
-target_include_directories(optimized_1.out PRIVATE ${CMAKE_SOURCE_DIR}/include)
+add_executable(optimized.out src/test.cpp)
+target_include_directories(optimized.out PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
-target_compile_definitions(optimized_1.out PRIVATE IMPL=2)
+target_compile_definitions(optimized.out PRIVATE IMPL=2)
 
-add_executable(optimized_2.out src/test.cpp)
-target_include_directories(optimized_2.out PRIVATE ${CMAKE_SOURCE_DIR}/include)
+add_executable(optimized_parallel.out src/test.cpp)
+target_include_directories(optimized_parallel.out PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
-target_compile_definitions(optimized_2.out PRIVATE IMPL=3)
+target_compile_definitions(optimized_parallel.out PRIVATE IMPL=3)

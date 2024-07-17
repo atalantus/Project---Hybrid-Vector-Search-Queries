@@ -5,13 +5,50 @@
 #include <queue>
 
 /*
- *  Example code using sampling to find KNN.
+ * Enables performance debugging.
  */
-
-#define ENABLE_PERF_DBG 1
+#define ENABLE_PERF_DBG 0
 
 #include "optimized_impl.h"
 #include "util.h"
+
+#if 0
+
+float compare_with_id(const d_vec_t& data_vec, const q_vec_t& query_vec)
+{
+    __m256 sum_vec = _mm256_set1_ps(0.0);
+
+    // Skip the first 2 dimensions
+    for (size_t i = 2; i < VEC_DIM - (VEC_DIM % 8) + 2; i += 8)
+    {
+        __m256 d_vec = _mm256_loadu_ps(&data_vec[i]);
+        __m256 q_vec = _mm256_loadu_ps(&query_vec[i]);
+
+        __m256 diff_vec = d_vec - q_vec;
+        diff_vec *= diff_vec;
+        sum_vec += diff_vec;
+    }
+
+    // do the rest
+    {
+        auto r = (VEC_DIM - 2) % 8;
+        auto cm = [r](size_t n) -> int
+        { return n <= r ? -1 : 0; };
+        __m256i mask = _mm256_set_epi32(cm(1), cm(2), cm(3), cm(4), cm(5), cm(6), cm(7), 0);
+        __m256 d_vec = _mm256_castsi256_ps(
+                _mm256_and_si256(_mm256_castps_si256(_mm256_loadu_ps(&data_vec[VEC_DIM - 8])), mask));
+        __m256 q_vec = _mm256_castsi256_ps(
+                _mm256_and_si256(_mm256_castps_si256(_mm256_loadu_ps(&query_vec[VEC_DIM - 8])), mask));
+
+        __m256 diff_vec = d_vec - q_vec;
+        diff_vec *= diff_vec;
+        sum_vec += diff_vec;
+    }
+
+    return hsum256_ps_avx(sum_vec);
+}
+
+#else
 
 float compare_with_id(const std::vector<float>& a, const std::vector<float>& b)
 {
@@ -25,6 +62,7 @@ float compare_with_id(const std::vector<float>& a, const std::vector<float>& b)
 
     return sum;
 }
+#endif
 
 void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, float sample_proportion,
                vector<vector<uint32_t>>& knn_results)
@@ -138,8 +176,8 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
     }
 
     PERF_DBG(
-            std::cerr << "indexing:\t" << index_t << std::endl;
-            std::cerr << "dist calc:\t" << dist_t << std::endl;
-            std::cerr << "sorting:\t" << sort_t << std::endl;
+            std::cerr << "indexing cycles:\t" << index_t << std::endl;
+            std::cerr << "dist calc cycles:\t" << dist_t << std::endl;
+            std::cerr << "sorting cycles:\t" << sort_t << std::endl;
     )
 }
