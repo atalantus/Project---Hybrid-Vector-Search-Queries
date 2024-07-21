@@ -2,4 +2,5 @@
 *.out
 cmake-*
 build
-*.bin
+data
+result_data
