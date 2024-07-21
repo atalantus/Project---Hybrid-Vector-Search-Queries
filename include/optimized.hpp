@@ -12,7 +12,7 @@
 /*
  * Enables performance debugging.
  */
-#define ENABLE_PERF_DBG 0
+#define ENABLE_PERF_DBG 1
 
 /*
  * Use Heap Knn instead of unsorted Knn
@@ -131,11 +131,16 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
     }
 
     PERF_DBG(
-            std::cerr << "total dist calcs:\t" << dist_calcs << std::endl;
-            std::cerr << "total bailouts:\t\t" << bailout << std::endl;
-            std::cerr << "dist calc cycles:\t" << dist_calc_t << std::endl;
-            std::cerr << "knn check_add cycles:\t" << knn_check_t << std::endl;
-            std::cerr << "knn find worst cycles:\t" << find_worst_t << std::endl;
-            std::cerr << "knn sort cycles:\t" << knn_sort_t << std::endl;
+#if RDTSC
+            auto unit = " cycles";
+#else
+            auto unit = " ns";
+#endif
+
+            std::cerr << "total dist calcs: \t" << dist_calcs << std::endl;
+            std::cerr << "total bailouts: \t" << bailout << std::endl;
+            std::cerr << "dist calc: \t\t" << dist_calc_t << unit << std::endl;
+            std::cerr << "knn check_add: \t\t" << knn_check_t << unit << std::endl;
+            std::cerr << "knn sort: \t\t" << knn_sort_t << unit << std::endl;
     )
 }

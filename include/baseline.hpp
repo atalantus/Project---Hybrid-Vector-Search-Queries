@@ -7,7 +7,7 @@
 /*
  * Enables performance debugging.
  */
-#define ENABLE_PERF_DBG 0
+#define ENABLE_PERF_DBG 1
 
 #include "optimized_impl.h"
 #include "util.h"
@@ -62,6 +62,7 @@ float compare_with_id(const std::vector<float>& a, const std::vector<float>& b)
 
     return sum;
 }
+
 #endif
 
 void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, float sample_proportion,
@@ -100,7 +101,7 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
 
         vector<uint32_t> knn; // candidate knn
 
-        PERF_DBG(auto s1 = rdtsc();)
+        PERF_DBG(auto s1 = get_ts();)
 
         // Handling 4 types of queries
         if (query_type == 0)
@@ -145,7 +146,7 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
             }
         }
 
-        PERF_DBG(auto s2 = rdtsc();index_t += s2 - s1;)
+        PERF_DBG(auto s2 = get_ts();index_t += ts_dur(s1, s2);)
 
         // build another vec to store the distance between knn[i] and query_vec
         vector<float> dists;
@@ -153,7 +154,7 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
         for (uint32_t j = 0; j < knn.size(); j++)
             dists[j] = compare_with_id(nodes[knn[j]], query_vec);
 
-        PERF_DBG(auto s3 = rdtsc();dist_t += s3 - s2;)
+        PERF_DBG(auto s3 = get_ts();dist_t += ts_dur(s2, s3);)
 
         vector<uint32_t> ids;
         ids.resize(knn.size());
@@ -170,14 +171,20 @@ void vec_query(vector<vector<float>>& nodes, vector<vector<float>>& queries, flo
             knn_sorted[j] = knn[ids[j]];
         }
 
-        PERF_DBG(auto s4 = rdtsc();sort_t += s4 - s3;)
+        PERF_DBG(sort_t += ts_dur_now(s3);)
 
         knn_results.push_back(knn_sorted);
     }
 
     PERF_DBG(
-            std::cerr << "indexing cycles:\t" << index_t << std::endl;
-            std::cerr << "dist calc cycles:\t" << dist_t << std::endl;
-            std::cerr << "sorting cycles:\t" << sort_t << std::endl;
+#if RDTSC
+            auto unit = " cycles";
+#else
+            auto unit = " ns";
+#endif
+
+            std::cerr << "indexing: \t" << index_t << unit << std::endl;
+            std::cerr << "dist calc: \t" << dist_t << unit << std::endl;
+            std::cerr << "sorting: \t" << sort_t << unit << std::endl;
     )
 }

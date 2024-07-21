@@ -1,6 +1,25 @@
 # Project: Hybrid Vector Search Queries
 This project is about optimizing the baseline implementation (`baseline.cpp`) of a vector search engine. Therefore, you should use the techniques and methods we've shown in the lecture (i.e., vectorization, I/O optimization, cache awareness, etc.).
 
+## Report & Presentation
+The written report can be found under `/report`.
+
+The presentation can be found under `/presentation`.
+
+## Compilation
+Build the project
+```
+mkdir -p "build"
+cd "build"
+cmake ..
+cmake --build .
+```
+Build and run the project
+```
+chmod +x run.sh
+sudo ./run.sh
+```
+
 ## Description
  Given a set of vectors with additional attributes, the task is to answer hybrid vector search queries over the data accurately as fast as possible. A hybrid vector query is to find the approximate **k nearest neighbors** of a given query vector under one given similarity measure, such as *Euclidean distance*, with some constraints on non-vector attributes. For each query, your output should be the ids of the **k** nearest neighbors determined by your algorithm. 
  
@@ -47,25 +66,6 @@ Your output should be the ids of the k nearest neighbors determined by your algo
 
 ### Note
 It is **prohibitive** to use query vectors during the indexing phase.
-
-## Compilation
-Build the project
-```
-mkdir -p "build"
-cd "build"
-cmake ..
-cmake --build .
-```
-Run the project
-```
-cd "build"
-./baseline.out
-```
-Build and run the project
-```
-chmod +x run.sh
-sudo ./run.sh
-```
 
 ## Organization
 - This is not a group project: you're working on your own

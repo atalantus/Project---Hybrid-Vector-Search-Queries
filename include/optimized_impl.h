@@ -172,7 +172,6 @@ float dist_to_query(const d_vec_t& data_vec, const q_vec_t& query_vec, [[maybe_u
 PERF_DBG(
         std::atomic<uint64_t> dist_calc_t = 0;
         std::atomic<uint64_t> knn_check_t = 0;
-        std::atomic<uint64_t> find_worst_t = 0;
         std::atomic<uint64_t> knn_sort_t = 0;
         std::atomic<uint64_t> knn_merge_t = 0;
 )
@@ -287,9 +286,9 @@ public:
         const bool not_full = fill < KNN_LIMIT;
         const float worst_dist = dist_array[worst];
         const float bailout_dist = not_full ? std::numeric_limits<float>::infinity() : worst_dist;
-        PERF_DBG(auto s1 = rdtsc();)
+        PERF_DBG(auto s1 = get_ts();)
         const float dist = dist_to_query(_nodes[node_idx], *query_vec, bailout_dist);
-        PERF_DBG(auto s2 = rdtsc();dist_calc_t += s2 - s1;)
+        PERF_DBG(auto s2 = get_ts();dist_calc_t += ts_dur(s1, s2);)
 
         /*
          * The amount of cycles spent in this section is astonishing.
@@ -332,17 +331,18 @@ public:
 
 #endif
 
-        PERF_DBG(knn_check_t += rdtsc() - s2;)
+        PERF_DBG(knn_check_t += ts_dur_now(s2);)
     }
 
     inline void merge(Knn& other)
     {
+        PERF_DBG(auto s1 = get_ts();)
+
         for (uint32_t i = 0; i < other.fill; ++i)
         {
             const bool not_full = fill < KNN_LIMIT;
             const float worst_dist = dist_array[worst];
             const float other_dist = other.dist_array[i];
-            PERF_DBG(auto s2 = rdtsc();)
 
 #if 1
 
@@ -379,8 +379,9 @@ public:
 
 #endif
 
-            PERF_DBG(knn_merge_t += rdtsc() - s2;)
         }
+
+        PERF_DBG(knn_merge_t += ts_dur_now(s1);)
     }
 
     [[nodiscard]] inline uint32_t size() const
@@ -390,7 +391,7 @@ public:
 
     inline vector<uint32_t> get_knn_sorted()
     {
-        PERF_DBG(auto s = rdtsc();)
+        PERF_DBG(auto s1 = get_ts();)
 
         vector<uint32_t> knn_sorted;
         knn_sorted.resize(fill);
@@ -430,7 +431,7 @@ public:
 
 #endif
 
-        PERF_DBG(knn_sort_t += rdtsc() - s;)
+        PERF_DBG(knn_sort_t += ts_dur_now(s1);)
 
         return knn_sorted;
     }
@@ -484,9 +485,9 @@ public:
     {
         float worst_dist = knn_heap.front().dist;
         float bailout_dist = is_full ? worst_dist : std::numeric_limits<float>::infinity();
-        PERF_DBG(auto s = rdtsc();)
+        PERF_DBG(auto s1 = get_ts();)
         float dist = dist_to_query(_nodes[vec_idx], *query_vec, bailout_dist);
-        PERF_DBG(auto s2 = rdtsc();dist_calc_t += s2 - s;)
+        PERF_DBG(auto s2 = get_ts();dist_calc_t += ts_dur(s1, s2);)
 
         if (__builtin_expect(!is_full, 0))
         {
@@ -511,7 +512,7 @@ public:
             // new element is not better than the worst element in array
         }
 
-        PERF_DBG(knn_check_t += rdtsc() - s2;)
+        PERF_DBG(knn_check_t += ts_dur_now(s2);)
     }
 
     [[nodiscard]] inline uint32_t size() const
@@ -521,7 +522,7 @@ public:
 
     inline vector<uint32_t> get_knn_sorted()
     {
-        PERF_DBG(auto s = rdtsc();)
+        PERF_DBG(auto s1 = get_ts();)
         assert(std::is_heap(knn_heap.begin(), knn_heap.begin() + fill, compare_heap_el));
 
         vector<uint32_t> knn_sorted;
@@ -536,7 +537,7 @@ public:
         is_full = false;
         fill = 0;
 
-        PERF_DBG(knn_sort_t += rdtsc() - s;)
+        PERF_DBG(knn_sort_t += ts_dur_now(s1);)
 
         return knn_sorted;
     }

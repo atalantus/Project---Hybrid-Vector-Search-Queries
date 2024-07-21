@@ -2,6 +2,8 @@
 #include <iomanip>
 #include "io.h"
 
+constexpr auto error_delta = 0.002;
+
 template<typename T>
 void compare(const std::string& a_path, const std::string& b_path)
 {
@@ -22,6 +24,10 @@ void compare(const std::string& a_path, const std::string& b_path)
         return;
     }
 
+    bool same = true;
+    uint32_t errs = 0;
+    double max_error = 0;
+
     for (int k = 0; k < a_dist_data.size(); ++k)
     {
         if (a_dist_data[k].size() != b_dist_data[k].size())
@@ -31,27 +37,43 @@ void compare(const std::string& a_path, const std::string& b_path)
             return;
         }
 
-        int errs = 0;
-
         for (int l = 0; l < a_dist_data[k].size(); ++l)
         {
             auto diff = std::abs((double) a_dist_data[k][l] - (double) b_dist_data[k][l]);
-            if (diff >= 0.002)
+
+            if (diff > max_error)
+            {
+                max_error = diff;
+                same = false;
+            }
+
+            if (diff >= error_delta)
             {
                 success = false;
                 errs++;
-                std::cerr << k << " - " << l << ": distance difference of " << diff << " between "
-                          << std::setprecision(15) << a_dist_data[k][l] << " and " << b_dist_data[k][l] << std::endl;
-                if (errs >= 50) {
-                    return;
+                if (errs < 50)
+                {
+                    std::cerr << k << " - " << l << ": distance difference of " << diff << " between "
+                              << std::setprecision(15) << a_dist_data[k][l] << " and " << b_dist_data[k][l]
+                              << std::endl;
                 }
             }
         }
     }
 
-    if (success)
+    if (success && same)
     {
         std::cout << "Datasets are the same!" << std::endl;
+    } else
+    {
+        if (success)
+        {
+            std::cout << "Datasets are similar under error delta!" << std::endl;
+        } else
+        {
+            std::cout << "ERROR: Found a total of " << errs << " differences!" << std::endl;
+        }
+        std::cout << "Max Floating Point Error Difference: " << std::setprecision(15) << max_error << std::endl;
     }
 }
 
