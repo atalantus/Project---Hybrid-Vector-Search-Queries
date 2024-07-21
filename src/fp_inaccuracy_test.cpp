@@ -93,6 +93,6 @@ int main()
 
     auto fvd = compare_with_id<double>(vd, vd2);
 
-    std::cout << "\nAbsolute Difference: " << std::setprecision(15) << std::abs(fvb - fvb2) << "\nFinal Values: " << fvb
-              << " " << fvb2 << " " << fvd << std::endl;
+    std::cout << "\nAbsolute Difference (Vec. vs Non-Vec.): " << std::setprecision(15) << std::abs(fvb - fvb2) << "\nNon-Vectorized Dist:\t\t" << fvb
+              << "\nVectorized Dist:\t\t" << fvb2 << "\nDouble Non-Vectorized Dist:\t" << fvd << std::endl;
 }

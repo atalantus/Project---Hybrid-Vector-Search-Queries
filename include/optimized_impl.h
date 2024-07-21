@@ -292,7 +292,7 @@ public:
         PERF_DBG(auto s2 = rdtsc();dist_calc_t += s2 - s1;)
 
         /*
-         * The amount of cycles spent in this function is astonishing.
+         * The amount of cycles spent in this section is astonishing.
          * I thought this to be the result of branch miss predictions, however,
          * the (complex) branchless code below did neither result in any performance
          * benefits nor (noticeably) less branch misses overall.
